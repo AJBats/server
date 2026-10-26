@@ -126,6 +126,45 @@ namespace pawn
         return out;
     }
 
+    auto walker::sneakMobOf(const danger::Sphere& s, const timer::time_point tick) -> cardian::sneak::Mob
+    {
+        cardian::sneak::Mob m;
+        m.at       = s.mob->loc.p;
+        m.cone     = s.cone;
+        m.allRound = s.allRound;
+        m.speed    = static_cast<float>(std::max(s.mob->GetSpeed(), s.mob->baseSpeed)) / 17.0f;
+
+        const auto* PPath      = s.mob->PAI->PathFind.get();
+        const bool  patrolling = PPath != nullptr && PPath->IsPatrolling();
+        const bool  walking    = patrolling || (PPath != nullptr && PPath->IsFollowingPath());
+        if (const auto* PController = dynamic_cast<const CMobController*>(s.mob->PAI->GetController()); PController != nullptr && !walking)
+        {
+            const auto resumes = PController->LastActionTime() + std::chrono::seconds(s.mob->getMobMod(xi::MobMod::RoamCool));
+            m.restLeft         = std::max(0.0f, std::chrono::duration<float>(resumes - tick).count());
+        }
+        if (patrolling)
+        {
+            m.unbounded = true;
+        }
+        else if (const RoamRegion* region = s.mob->roamRegion(); region != nullptr)
+        {
+            m.outside = [region](const position_t& p) { return region->distanceOutside(p); };
+        }
+        else
+        {
+            m.home = s.mob->m_SpawnPoint;
+            m.roam = s.mob->GetRoamDistance();
+        }
+        // Away from its territory -- on its way home -- it is not where the
+        // model says it can be
+        if (!m.unbounded)
+        {
+            const float away = m.outside ? m.outside(m.at) : std::max(0.0f, distance(m.at, m.home, true) - m.roam);
+            m.unbounded      = away > 5.0f;
+        }
+        return m;
+    }
+
     Walker::Walker(CBattleEntity* owner, WalkHost& host)
     : owner_(owner)
     , host_(host)
@@ -144,6 +183,11 @@ namespace pawn
     auto Walker::sneakingBy(const timer::time_point tick) const -> bool
     {
         return !plan.hop.empty() && owner_->getZone() == plan.hopZone && std::chrono::duration<float>(tick - plan.hopAt).count() <= plan.hopSeconds + kHopLate;
+    }
+
+    auto Walker::visiting(const timer::time_point tick) const -> bool
+    {
+        return plan.hopVisit && sneakingBy(tick);
     }
 
     void Walker::forgetSight()
@@ -243,6 +287,14 @@ namespace pawn
             plan.hopWalking = false;
             plan.known      = false;
             plan.heldSince.reset();
+        }
+
+        // A visit (Rules::visitStay) is for its point alone: her walk asked to
+        // go elsewhere -- her shot taken, the run home -- ends it, and the
+        // walk is planned afresh from inside the ring, out of it first
+        if (plan.hopVisit && !plan.hop.empty() && distance(point, plan.hopGoal) > kSameGoal)
+        {
+            endHop("is over: her walk goes elsewhere");
         }
 
         // On a sneak-by she walks it past the mobs, and nothing else has a say
@@ -703,6 +755,14 @@ namespace pawn
             result.outcome = caughtBy != nullptr                                       ? Outcome::Escaping
                              : distance(plan.target, point) > 0.01f || plan.door != 0 ? Outcome::Held
                                                                                        : Outcome::Walking;
+            // At the safe ground beside a point inside a ring, a walk that
+            // asks for it looks for a visit in to it behind its mobs' backs
+            if (result.outcome == Outcome::Held && plan.door == 0 && rules.visitStay > 0.0f && rules.sneaks && visitTo(point, rules) && hopTick(racing))
+            {
+                result.outcome = Outcome::Hopping;
+                result.target  = point;
+                result.action  = WalkAction::Detour;
+            }
             return result; // walked it all, or as far as a door
         }
 
@@ -829,10 +889,7 @@ namespace pawn
         const auto        began = std::chrono::steady_clock::now();
         const std::string who   = rules.wholeZone ? fmt::format("travel {}", owner_->getName()) : std::string(owner_->getName());
 
-        // Every mob that would come for her, as the hop reads it: its sight cone
-        // and its reach all round, its walk, the seconds before its rest ends
-        // (its last action plus its roam cool, as the game decides when to walk
-        // again), and its territory
+        // Every mob that would come for her, as the hop reads it (sneakMobOf)
         const float                         scan = rules.wholeZone ? kTrekScan : distance(owner_->loc.p, plan.target) * 1.5f + kLocalSpare;
         std::vector<cardian::sneak::Mob>    mobs;
         std::vector<cardian::route::Hazard> hazards;
@@ -843,41 +900,7 @@ namespace pawn
             {
                 continue;
             }
-            cardian::sneak::Mob m;
-            m.at       = s.mob->loc.p;
-            m.cone     = s.cone;
-            m.allRound = s.allRound;
-            m.speed    = static_cast<float>(std::max(s.mob->GetSpeed(), s.mob->baseSpeed)) / 17.0f;
-
-            const auto* PPath      = s.mob->PAI->PathFind.get();
-            const bool  patrolling = PPath != nullptr && PPath->IsPatrolling();
-            const bool  walking    = patrolling || (PPath != nullptr && PPath->IsFollowingPath());
-            if (const auto* PController = dynamic_cast<const CMobController*>(s.mob->PAI->GetController()); PController != nullptr && !walking)
-            {
-                const auto resumes = PController->LastActionTime() + std::chrono::seconds(s.mob->getMobMod(xi::MobMod::RoamCool));
-                m.restLeft         = std::max(0.0f, std::chrono::duration<float>(resumes - tick_).count());
-            }
-            if (patrolling)
-            {
-                m.unbounded = true;
-            }
-            else if (const RoamRegion* region = s.mob->roamRegion(); region != nullptr)
-            {
-                m.outside = [region](const position_t& p) { return region->distanceOutside(p); };
-            }
-            else
-            {
-                m.home = s.mob->m_SpawnPoint;
-                m.roam = s.mob->GetRoamDistance();
-            }
-            // Away from its territory -- on its way home -- it is not where the
-            // model says it can be
-            if (!m.unbounded)
-            {
-                const float away = m.outside ? m.outside(m.at) : std::max(0.0f, distance(m.at, m.home, true) - m.roam);
-                m.unbounded      = away > 5.0f;
-            }
-            mobs.push_back(std::move(m));
+            mobs.push_back(sneakMobOf(s, tick_));
             hazards.push_back({ .at = s.at, .radius = s.radius, .unseen = s.allRound });
             who_.push_back(s.mob);
         }
@@ -958,6 +981,104 @@ namespace pawn
         return true;
     }
 
+    auto Walker::visitTo(const position_t& point, const Rules& rules) -> bool
+    {
+        constexpr auto  kLookEvery = 2s;   // held beside her point, a visit is looked for this often
+        constexpr auto  kSayEvery  = 10s;  // ... and why none fits said at most this often
+        constexpr float kSlack     = 2.0f; // every rest taken to end this many seconds early (the sneak-by's)
+        constexpr float kSetOff    = 0.5f; // seconds before her first step
+        if (tick_ - plan.visitLookedAt < kLookEvery)
+        {
+            return false;
+        }
+        plan.visitLookedAt = tick_;
+        const auto began = std::chrono::steady_clock::now();
+
+        // Every mob that would come for her (sneakMobOf), and the ground round
+        // each one's cone and its reach all round
+        const float                         scan = distance(owner_->loc.p, point) * 1.5f + kLocalSpare;
+        std::vector<cardian::sneak::Mob>    mobs;
+        std::vector<cardian::route::Hazard> hazards;
+        std::vector<CMobEntity*>            who_;
+        for (const auto& s : ballsFor(rules, scan))
+        {
+            if (s.mob == nullptr)
+            {
+                continue;
+            }
+            mobs.push_back(sneakMobOf(s, tick_));
+            hazards.push_back({ .at = s.at, .radius = s.radius, .unseen = s.allRound });
+            who_.push_back(s.mob);
+        }
+        if (mobs.empty())
+        {
+            return false;
+        }
+        const cardian::route::HazardSight cone  = [&](const size_t h, const position_t& p) { return facing(mobs[h].at, p, 64); };
+        const auto                        route = pawn::travel::routeAvoiding(owner_->getZone(), owner_->loc.p, point, hazards, cone, scan);
+        std::string                       why   = "no way to her point on the mesh";
+        cardian::sneak::Visit             visit;
+        std::vector<position_t>           steps(1, owner_->loc.p);
+        if (route.has_value() && route->complete)
+        {
+            steps.insert(steps.end(), route->points.begin(), route->points.end());
+            visit = cardian::sneak::visit(mobs, steps, static_cast<float>(owner_->GetSpeed()) / 17.0f, kSetOff, kSlack, rules.visitStay);
+            if (!visit.fits && visit.caughtBy >= 0)
+            {
+                const auto& m = mobs[visit.caughtBy];
+                why           = fmt::format("{} would reach her {:.0f} s in ({:.0f}y from her now, {}, facing {} her)", who_[visit.caughtBy]->getName(), visit.caughtAt,
+                                            distance(m.at, owner_->loc.p), m.restLeft > 0.0f ? fmt::format("resting {:.0f} s more", m.restLeft) : std::string("walking or about to"),
+                                            facing(m.at, owner_->loc.p, 64) ? "toward" : "away from");
+            }
+        }
+        // never through a closed door she may not open
+        if (visit.fits && settings::get<bool>("pawn.DOOR_CROSSING") && pawn::doors::firstOnRoute(owner_, steps).has_value())
+        {
+            visit.fits = false;
+            why        = "its way runs through a closed door";
+        }
+        const auto took = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began);
+        if (!visit.fits)
+        {
+            if (tick_ - plan.visitSaidAt >= kSayEvery)
+            {
+                plan.visitSaidAt = tick_;
+                ShowInfoFmt("pawn: {}: no visit in behind their backs yet: {} ({} mobs, {:.1f} ms)", owner_->getName(), why, mobs.size(), took.count() / 1000.0);
+            }
+            return false;
+        }
+        ShowInfoFmt("pawn: {}: visits her point in behind their backs: {:.0f}y in, there in {:.0f} s, {:.0f} s there, out again by {:.0f} s ({} mobs, {:.1f} ms)",
+                    owner_->getName(), cardian::walk::lengthOf(steps), visit.arriveAt, rules.visitStay, visit.outAt, mobs.size(), took.count() / 1000.0);
+        plan.hop          = std::move(steps);
+        plan.hopZone      = owner_->getZone();
+        plan.hopAt        = tick_;
+        plan.hopSeconds   = visit.arriveAt + rules.visitStay;
+        plan.hopWalking   = false;
+        plan.hopVisit     = true;
+        plan.hopGoal      = point;
+        plan.visitIn      = visit.arriveAt;
+        plan.visitStay    = rules.visitStay;
+        plan.visitArrived.reset();
+        return true;
+    }
+
+    void Walker::endHop(const std::string_view how)
+    {
+        const float       elapsed = std::chrono::duration<float>(tick_ - plan.hopAt).count();
+        const std::string who     = plan.rules.wholeZone ? fmt::format("travel {}", owner_->getName()) : std::string(owner_->getName());
+        ShowInfoFmt("pawn: {}: the {} {} after {:.0f} s", who, plan.hopVisit ? "visit" : "sneak-by", how, elapsed);
+        plan.hop.clear();
+        plan.hopWalking = false;
+        plan.hopVisit   = false;
+        plan.visitArrived.reset();
+        plan.known = false; // her route is planned afresh from where the hop left her
+        plan.heldSince.reset();
+        if (auto* PPathFind = owner_->PAI->PathFind.get(); PPathFind->IsFollowingPath())
+        {
+            PPathFind->Clear();
+        }
+    }
+
     auto Walker::hopTick(const bool racing) -> bool
     {
         constexpr float kThrough = 0.3f; // this near its end, she is past them: her path finder arrives within 0.1
@@ -965,44 +1086,52 @@ namespace pawn
         {
             return false;
         }
-        auto*             PPathFind = owner_->PAI->PathFind.get();
-        const float       elapsed   = std::chrono::duration<float>(tick_ - plan.hopAt).count();
-        const std::string who       = plan.rules.wholeZone ? fmt::format("travel {}", owner_->getName()) : std::string(owner_->getName());
-        const auto        over      = [&](const std::string_view how)
-        {
-            ShowInfoFmt("pawn: {}: the sneak-by {} after {:.0f} s", who, how, elapsed);
-            plan.hop.clear();
-            plan.hopWalking = false;
-            plan.known      = false; // her route is planned afresh from where the hop left her
-            plan.heldSince.reset();
-            if (PPathFind->IsFollowingPath())
-            {
-                PPathFind->Clear();
-            }
-        };
+        auto*       PPathFind = owner_->PAI->PathFind.get();
+        const float elapsed   = std::chrono::duration<float>(tick_ - plan.hopAt).count();
 
         // Caught on the way, the chase has her; at its end, past her time to
         // reach it, or out of the zone it was planned in, the everyday rules take
         // over again
         if (racing)
         {
-            over("is caught");
+            endHop("is caught");
             return false;
         }
         if (owner_->getZone() != plan.hopZone)
         {
-            over("ends with her zone");
+            endHop("ends with her zone");
             return false;
         }
         if (distance(owner_->loc.p, plan.hop.back()) < kThrough)
         {
-            over("is through");
-            host_.sneakedThrough();
-            return false;
+            if (!plan.hopVisit)
+            {
+                endHop("is through");
+                host_.sneakedThrough();
+                return false;
+            }
+            // A visit: she stays at her point its stay, standing, and only
+            // then is the walk the everyday rules' again
+            if (!plan.visitArrived.has_value())
+            {
+                plan.visitArrived = tick_;
+            }
+            if (std::chrono::duration<float>(tick_ - *plan.visitArrived).count() >= plan.visitStay)
+            {
+                endHop("is over: she has stayed");
+                return false;
+            }
+            if (PPathFind->IsFollowingPath())
+            {
+                PPathFind->Clear();
+            }
+            plan.hopWalking = false;
+            host_.sneakStepped();
+            return true;
         }
-        if (elapsed > plan.hopSeconds + kHopLate)
+        if (elapsed > (plan.hopVisit ? plan.visitIn : plan.hopSeconds) + kHopLate)
         {
-            over("runs late, and is given up");
+            endHop("runs late, and is given up");
             return false;
         }
 

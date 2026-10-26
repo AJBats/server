@@ -115,22 +115,32 @@ namespace cardian::pull
         return std::max(1.0f, range - kShotMargin);
     }
 
-    // Where she walks to shoot from: nowhere when she stands within reach and
-    // sees the mob; toward the mob itself while she cannot see it; else the
-    // point on the line from her to it, half a yalm inside reach
-    inline auto tagSpot(const position_t& from, const position_t& mob, const float reach, const bool sight) -> std::optional<position_t>
+    // The spots round a mob she may shoot it from, as far off as her shot
+    // reaches (the user, 2026-10-25): rings at her reach and every kSpotStep
+    // yalms inside it, down to kSpotNearest, kSpotDirections round each, at
+    // the mob's height. The farthest ring first; each ring's spots nearest
+    // `from`, where she stands, first. The caller sets each on the ground and
+    // asks its sight and the danger map
+    constexpr int   kSpotDirections = 16;
+    constexpr float kSpotStep       = 4.0f;
+    constexpr float kSpotNearest    = 6.0f;
+    constexpr float kSpotRoam       = 2.0f; // the mob roamed this far from where it stood as her spot was chosen: chosen again
+    inline auto shotRings(const position_t& mob, const float reach, const position_t& from) -> std::vector<std::vector<position_t>>
     {
-        if (!sight)
+        std::vector<std::vector<position_t>> rings;
+        for (float r = reach; r > 0.0f && (rings.empty() || r >= kSpotNearest); r -= kSpotStep)
         {
-            return mob;
+            std::vector<position_t> ring;
+            ring.reserve(kSpotDirections);
+            for (int i = 0; i < kSpotDirections; ++i)
+            {
+                const float a = static_cast<float>(i) * 6.2831853f / static_cast<float>(kSpotDirections);
+                ring.emplace_back(mob.x + r * std::cos(a), mob.y, mob.z + r * std::sin(a), 0, 0);
+            }
+            std::ranges::stable_sort(ring, [&](const position_t& a, const position_t& b) { return distance(a, from) < distance(b, from); });
+            rings.push_back(std::move(ring));
         }
-        const float gap = distance(from, mob);
-        if (gap <= reach)
-        {
-            return std::nullopt;
-        }
-        const float fraction = (gap - std::max(0.0f, reach - 0.5f)) / gap;
-        return position_t(from.x + (mob.x - from.x) * fraction, from.y + (mob.y - from.y) * fraction, from.z + (mob.z - from.z) * fraction, 0, 0);
+        return rings;
     }
 
     // ---- the pull list ----------------------------------------------------
@@ -341,6 +351,7 @@ namespace cardian::pull
     constexpr double kWayFactor    = 1.2;  // the way walked, against the straight line
     constexpr double kSlackSeconds = 3.0;  // she sets out this much early, to stand ready at the spot
     constexpr double kHoldSeconds  = 90.0; // ready at the spot, a shot held this long is given up
+    constexpr double kWaitLead     = 45.0; // a mob she will wait near (aggro holds it) is set out for this much early: half the hold, so a way that opens at once holds her shot no longer than half its limit
     constexpr double kKinPassOverSeconds = 15.0; // a mob left for another while kin stood on its way back: not picked again for this long
     constexpr float  kYalmsPerPlace = 30.0f; // the pick: a kind a place lower on the list must stand this much nearer
 
@@ -479,6 +490,7 @@ namespace cardian::pull
     constexpr float  kHomeYalms       = 1.0f; // within this of the point past the landing (pastLanding) she is back
     constexpr float  kRunPast         = 3.0f; // she runs this far past the landing point, so the mob chasing her stops on it (the user, 2026-10-16)
     constexpr double kQuietSeconds    = 3.0;  // a look round the camp that found nothing is made again after this
+    constexpr float  kLeftBehindReach = 25.0f; // a mob the party leaves be (a worm) holds her next pull back while she stands this near it: its spells' reach
     constexpr double kShootSeconds    = 20.0; // in reach and in sight, a first shot or song refused this long: she gives the mob up
 
     // How long the walk out may take, and the run back, for a mob this far

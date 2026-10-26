@@ -29,6 +29,7 @@
 #include "players.h"
 #include "stake_math.h"
 #include "stake_flag.h" // CARDIAN TRIAL: the stake's flag
+#include "pawn_danger.h"
 #include "party_finder.h"
 #include "party_roster.h"
 #include "pawn_items.h"
@@ -1710,6 +1711,106 @@ namespace pawn
         applyOrders(POwner->id);
     }
 
+    namespace
+    {
+        // The mobs each player's party leaves be (leaveBehind), by the player
+        std::unordered_map<uint32, std::vector<uint32>> leftBehindByOwner;
+
+        // A left mob come in: onto the camp's ground while a camp stands (the
+        // user, 2026-10-25: one that nukes the camp from outside it is his to
+        // deal with -- a retreat and the camp moved, or his own attack); with
+        // none, within its reach of a body of his party in its zone, the
+        // player's own among them
+        auto cameIn(const uint32 ownerCharID, const CMobEntity* PMob) -> bool
+        {
+            if (stakeOf(ownerCharID).has_value())
+            {
+                return onCampGround(ownerCharID, PMob);
+            }
+            auto*      POwner  = zoneutils::GetChar(ownerCharID);
+            const auto inReach = [&](CBattleEntity* PMember)
+            {
+                return PMember != nullptr && PMember->loc.zone == PMob->loc.zone && PMember->isAlive() &&
+                       distance(PMember->loc.p, PMob->loc.p) <= PMob->GetMeleeRange(PMember);
+            };
+            if (POwner == nullptr || POwner->PParty == nullptr)
+            {
+                return inReach(POwner);
+            }
+            return std::ranges::any_of(POwner->PParty->members, inReach);
+        }
+    } // namespace
+
+    void leaveBehind(const uint32 ownerCharID, const CMobEntity* PMob, const std::string_view why)
+    {
+        if (ownerCharID == 0 || PMob == nullptr)
+        {
+            return;
+        }
+        auto& left = leftBehindByOwner[ownerCharID];
+        if (std::ranges::find(left, PMob->id) == left.end())
+        {
+            left.push_back(PMob->id);
+            ShowInfoFmt("pawn: the party leaves {} be ({}), until it comes in or lets go", PMob->getName(), why);
+        }
+    }
+
+    auto leftBehind(const uint32 ownerCharID, const CMobEntity* PMob) -> bool
+    {
+        if (ownerCharID == 0 || PMob == nullptr)
+        {
+            return false;
+        }
+        const auto found = leftBehindByOwner.find(ownerCharID);
+        if (found == leftBehindByOwner.end())
+        {
+            return false;
+        }
+        auto&      left = found->second;
+        const auto it   = std::ranges::find(left, PMob->id);
+        if (it == left.end())
+        {
+            return false;
+        }
+        // Dead, let go of the party, or come in: the party's again
+        if (PMob->isDead() || !PMob->PAI->IsEngaged())
+        {
+            left.erase(it);
+            return false;
+        }
+        // The one he fights himself counts while he does: his own attack is
+        // his word on it
+        if (const auto* POwner = zoneutils::GetChar(ownerCharID);
+            POwner != nullptr && POwner->PAI->IsEngaged() && POwner->GetBattleTarget() == PMob)
+        {
+            return false;
+        }
+        if (cameIn(ownerCharID, PMob))
+        {
+            ShowInfoFmt("pawn: {} comes in: the party takes it up again", PMob->getName());
+            left.erase(it);
+            return false;
+        }
+        return true;
+    }
+
+    auto onCampGround(const uint32 ownerCharID, const CBaseEntity* PEntity) -> bool
+    {
+        const auto stake = stakeOf(ownerCharID);
+        if (!stake.has_value() || PEntity == nullptr || PEntity->getZone() != stake->zone)
+        {
+            return false;
+        }
+        const auto& at      = PEntity->loc.p;
+        const float forward = cardian::stake::forwardOf(stake->at.x, stake->at.z, stake->at.rotation, at.x, at.z);
+        return cardian::stake::onCampGround(distance(stake->at, at), forward, stake->front, stake->back);
+    }
+
+    auto chases(const CMobEntity* PMob) -> bool
+    {
+        return PMob != nullptr && PMob->baseSpeed > 0 && PMob->getMobMod(xi::MobMod::NoMove) == 0;
+    }
+
     void setRetreat(CCharEntity* POwner, const bool on)
     {
         if (POwner == nullptr)
@@ -1720,6 +1821,25 @@ namespace pawn
         if (orders.retreat != on)
         {
             ShowInfoFmt("pawn: {} calls retreat {}", POwner->getName(), on ? "on" : "off");
+            // Called off, the retreat leaves behind what it ran from: every mob
+            // still on a member of his party, within twice the camp's leash of
+            // him (the user, 2026-10-25)
+            if (!on && POwner->loc.zone != nullptr)
+            {
+                const auto onParty = [&](const CBattleEntity* PWho)
+                {
+                    const auto* PMember = PWho != nullptr && PWho->PMaster != nullptr ? PWho->PMaster : PWho;
+                    return PMember != nullptr &&
+                           (PMember == POwner || (POwner->PParty != nullptr && std::ranges::find(POwner->PParty->members, PMember) != POwner->PParty->members.end()));
+                };
+                forEachMobNear(entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.HUNT_LEASH") * 2.0f, [&](CMobEntity* PMob)
+                               {
+                                   if (PMob->isAlive() && PMob->PAI->IsEngaged() && onParty(PMob->GetBattleTarget()))
+                                   {
+                                       leaveBehind(POwner->id, PMob, "the retreat ran from it");
+                                   }
+                               });
+            }
         }
         orders.retreat = on;
         applyOrders(POwner->id);

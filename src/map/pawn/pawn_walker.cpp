@@ -336,6 +336,11 @@ auto CPawnController::SneakingBy() const -> bool
     return m_Walker.sneakingBy(m_Tick);
 }
 
+auto CPawnController::Visiting() const -> bool
+{
+    return m_Walker.visiting(m_Tick);
+}
+
 void CPawnController::TrekStep(const pawn::TravelHop& hop, const float distToLine, const bool ordered, const bool racing)
 {
     constexpr float kGotByNear = 8.0f; // past a choke she was stuck at: this near where it held her
@@ -488,6 +493,7 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
         // holds and sneaks by as ever, whatever is on her (the user,
         // 2026-10-13)
         rules.holds = !(FarFromParty() && HatedByAnyMob());
+        rules.visitStay = intent.visitStay;
     }
 
     AvoidAction action  = AvoidAction::None;
@@ -698,11 +704,12 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
     // Off the party's ground, held at a choke on her way in, she says she is
     // stuck, as a trek does, and once past it that she got by; back with the
     // party some other way -- the player came to her -- there is nothing to
-    // say (the user, 2026-10-13)
+    // say (the user, 2026-10-13). The puller waiting near her pull is no
+    // one stuck: waiting there is her job (the user, 2026-10-25)
     if (!intent.trek && walked && m_Plan.outcomeAt == m_Tick)
     {
         const bool offGround = FarFromParty();
-        if (offGround && m_Plan.outcome == Outcome::Held && m_Plan.heldSince.has_value())
+        if (offGround && m_Mode != Mode::Pull && m_Plan.outcome == Outcome::Held && m_Plan.heldSince.has_value())
         {
             SayStuckIfSure(false);
         }

@@ -8766,8 +8766,8 @@ auto CPawnController::CampBlocker() const -> std::string
 }
 
 auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level, const pawn::HuntRules& rules, std::string* skipped,
-                                     const std::span<const uint32> passOver, const std::span<const cardian::pull::ListRow> list, const float reach) const
-    -> CMobEntity*
+                                     const std::span<const uint32> passOver, const std::span<const cardian::pull::ListRow> list, const float reach,
+                                     const bool readyOnly, std::string* waits) const -> CMobEntity*
 {
     // What was in the band, or on the list, but not pulled, and why: a few, for the log
     int        skips = 0;
@@ -8866,53 +8866,47 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
             return;
         }
 
-        // The pull rule: prey standing in an aggressive mob's ball is not
-        // the pull -- the guard is, when the party allows aggressive company
-        // and the guard is itself fair game; otherwise the prey is skipped.
-        // With aggressive company avoided, a ball across the hunter's way in
-        // skips it too. The player can still sneak behind a guard and pull
-        // it to the party waiting outside its ball. The candidate in a ball,
-        // or the straight way in passing one: the pull itself is judged by
-        // the route she would walk (PullBlocker), the pick by the straight
+        // The pull rule, for the hunt's walk in: prey standing in an
+        // aggressive mob's ball is not the pull -- the guard is, when the
+        // party allows aggressive company and the guard is itself fair game;
+        // otherwise the prey is skipped. With aggressive company avoided, a
+        // ball across the hunter's way in skips it too. The candidate in a
+        // ball, or the straight way in passing one: the pull itself is judged
+        // by the route she would walk (PullBlocker), the pick by the straight
         // way, many times a tick; the candidate's own ball is no reason
-        // against pulling it
-        CMobEntity* pick         = PMob;
-        CMobEntity* guard        = BallHolding(balls, PMob, PMob->loc.p, true);
-        const bool  targetInside = guard != nullptr;
-        if (guard == nullptr)
+        // against pulling it. The camp's puller skips nothing for what stands
+        // round a mob: she shoots it from a spot of her own, and waits there
+        // while aggro or kin hold it (below)
+        CMobEntity* pick = PMob;
+        if (!planBack)
         {
-            guard = BallCrossing(balls, PMob, POwner->loc.p, PMob->loc.p);
-        }
-        if (guard != nullptr)
-        {
-            if (!rules.aggressive)
+            CMobEntity* guard        = BallHolding(balls, PMob, PMob->loc.p, true);
+            const bool  targetInside = guard != nullptr;
+            if (guard == nullptr)
             {
-                skip(PMob, targetInside ? fmt::format("inside {}'s circle", guard->getName())
-                                        : fmt::format("the way in crosses {}'s circle", guard->getName()));
-                return;
+                guard = BallCrossing(balls, PMob, POwner->loc.p, PMob->loc.p);
             }
-            if (targetInside)
+            if (guard != nullptr)
             {
-                if (!eligible(guard))
+                if (!rules.aggressive)
                 {
-                    skip(PMob, fmt::format("its guard {} is no pull", guard->getName()));
+                    skip(PMob, targetInside ? fmt::format("inside {}'s circle", guard->getName())
+                                            : fmt::format("the way in crosses {}'s circle", guard->getName()));
                     return;
                 }
-                pick = guard;
+                if (targetInside)
+                {
+                    if (!eligible(guard))
+                    {
+                        skip(PMob, fmt::format("its guard {} is no pull", guard->getName()));
+                        return;
+                    }
+                    pick = guard;
+                }
             }
-        }
-        if (!rules.links && pick->m_Link != 0 && linked(pick))
-        {
-            skip(pick, "kin nearby");
-            return;
-        }
-        // The camp's puller plans the run back too: a mob whose chase home
-        // would pass its linking kin is no pull (pull.h wayBackKin)
-        if (planBack)
-        {
-            if (const auto* PKin = pawn::pull::wayBackKin(pick, pick->loc.p, landing); PKin != nullptr)
+            if (!rules.links && pick->m_Link != 0 && linked(pick))
             {
-                skip(pick, fmt::format("its way back passes {}", PKin->getName()));
+                skip(pick, "kin nearby");
                 return;
             }
         }
@@ -8932,9 +8926,22 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
     // test the pull itself is judged by (PullBlocker), so the pick and the
     // pull never disagree; a few at most, a hunt check being made many times
     // (more for the camp's puller, whose look is made once a few seconds)
-    const size_t kRouteChecks = planBack ? 6 : 3;
+    const size_t kRouteChecks = planBack && !readyOnly ? 6 : 3; // a look for one she can pull now, made each few seconds she waits, asks fewer
     std::sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b) { return a.key != b.key ? a.key < b.key : a.dist < b.dist; });
     std::vector<const CMobEntity*> asked;
+    // The camp's puller: the first she can pull now -- shot from a spot
+    // outside every ring, her way there clear, no kin beside it nor on its
+    // way back -- else the best she can shoot at all, which she sets out for
+    // and waits at (the user, 2026-10-25). The pick's own balls serve every
+    // candidate (their own left out by ShotSpotFor); one with no ground in
+    // her reach in its sight, or one that cannot chase standing off the
+    // camp's ground (it would never come in), takes no place among the few
+    // weighed, up to kSpotLooks spot searches in all
+    constexpr int kSpotLooks = 10;
+    int           spotLooks  = 0;
+    CMobEntity*   best       = nullptr;
+    std::string   bestWaits;
+    const auto    owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner));
     for (const auto& r : ranked)
     {
         if (std::find(asked.begin(), asked.end(), r.mob) != asked.end())
@@ -8945,6 +8952,52 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
         {
             break;
         }
+        if (planBack)
+        {
+            if (!pawn::chases(r.mob) && !pawn::onCampGround(owner, r.mob))
+            {
+                skip(r.mob, "it cannot chase: it would never come in");
+                continue;
+            }
+            if (spotLooks >= kSpotLooks)
+            {
+                break;
+            }
+            ++spotLooks;
+            const auto spot = ShotSpotFor(r.mob, balls);
+            if (!spot.has_value())
+            {
+                skip(r.mob, "no ground within her reach of it in its sight");
+                continue;
+            }
+            asked.push_back(r.mob);
+            std::string wait = spot->open ? std::string() : spot->why;
+            if (wait.empty() && !rules.links && r.mob->m_Link != 0 && linked(r.mob))
+            {
+                wait = "kin beside it";
+            }
+            if (wait.empty())
+            {
+                if (const auto* PKin = pawn::pull::wayBackKin(r.mob, r.mob->loc.p, landing); PKin != nullptr)
+                {
+                    wait = fmt::format("its way back passes {}", PKin->getName());
+                }
+            }
+            if (wait.empty())
+            {
+                return r.mob;
+            }
+            if (best == nullptr)
+            {
+                best      = r.mob;
+                bestWaits = wait;
+            }
+            else
+            {
+                skip(r.mob, wait);
+            }
+            continue;
+        }
         asked.push_back(r.mob);
         if (const auto* guard = BallRouteHeld(balls, r.mob, r.mob->loc.p); guard != nullptr && !rules.aggressive)
         {
@@ -8952,6 +9005,14 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
             continue;
         }
         return r.mob;
+    }
+    if (best != nullptr && !readyOnly)
+    {
+        if (waits != nullptr)
+        {
+            *waits = bestWaits;
+        }
+        return best;
     }
     return nullptr;
 }

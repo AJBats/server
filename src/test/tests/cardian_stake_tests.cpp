@@ -567,3 +567,15 @@ TEST_CASE("Stake: the shared spacing leaves a reachable seat after backing off",
         }
     }
 }
+
+TEST_CASE("Stake: the camp's ground runs ahead to its front line and behind to its backline", "[cardian][stake]")
+{
+    // Medium spacing: 10 ahead, 12 behind
+    CHECK(onCampGround(9.0f, 5.0f, 10.0f, 12.0f));
+    CHECK_FALSE(onCampGround(11.0f, 5.0f, 10.0f, 12.0f));
+    CHECK(onCampGround(11.0f, -5.0f, 10.0f, 12.0f));
+    CHECK_FALSE(onCampGround(13.0f, -5.0f, 10.0f, 12.0f));
+    // none chosen: kFront ahead, kBack behind
+    CHECK(onCampGround(kFront - 1.0f, 1.0f, 0.0f, 0.0f));
+    CHECK_FALSE(onCampGround(kBack + 1.0f, -1.0f, 0.0f, 0.0f));
+}

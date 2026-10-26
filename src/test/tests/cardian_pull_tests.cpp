@@ -124,24 +124,10 @@ TEST_CASE("Cardian pull: the pull line", "[cardian][pull]")
     CHECK(pullLine("Bumblebee", 1, 3) == "Incoming! Bumblebee (Incredibly Easy Prey) <call3>");
 }
 
-TEST_CASE("Cardian pull: the tagging spot", "[cardian][pull]")
+TEST_CASE("Cardian pull: her shot's reach", "[cardian][pull]")
 {
     CHECK(shotReach(25.0f) == Catch::Approx(23.0f));
     CHECK(shotReach(2.0f) == Catch::Approx(1.0f));
-
-    const position_t her(0.0f, 0.0f, 0.0f, 0, 0);
-    // within reach and in sight: she shoots where she stands
-    CHECK_FALSE(tagSpot(her, position_t(20.0f, 0.0f, 0.0f, 0, 0), 23.0f, true).has_value());
-    // out of sight: toward the mob itself, until she sees it
-    const auto blind = tagSpot(her, position_t(10.0f, 0.0f, 5.0f, 0, 0), 23.0f, false);
-    REQUIRE(blind.has_value());
-    CHECK(blind->x == Catch::Approx(10.0f));
-    CHECK(blind->z == Catch::Approx(5.0f));
-    // too far: on the line to it, half a yalm inside reach of it
-    const auto spot = tagSpot(her, position_t(40.0f, 0.0f, 0.0f, 0, 0), 23.0f, true);
-    REQUIRE(spot.has_value());
-    CHECK(spot->x == Catch::Approx(17.5f));
-    CHECK(distance(*spot, position_t(40.0f, 0.0f, 0.0f, 0, 0)) == Catch::Approx(22.5f));
 }
 
 TEST_CASE("Cardian pull: the shot", "[cardian][pull]")
@@ -559,4 +545,22 @@ TEST_CASE("Cardian pull: ammunition topped up to a stack once half is gone", "[c
     // a stack size past 99 is taken as 99; a broken one as 1
     CHECK(ammoTopUp(0, 255) == 99);
     CHECK(ammoTopUp(0, 0) == 1);
+}
+
+TEST_CASE("Pull: her spots round a mob, as far off as her shot reaches first, each ring's nearest her first", "[cardian][pull]")
+{
+    const position_t mob(0.0f, 0.0f, 0.0f, 0, 0);
+    const position_t her(-50.0f, 0.0f, 0.0f, 0, 0);
+    const auto       rings = shotRings(mob, 20.0f, her);
+    REQUIRE(rings.size() == 4); // 20, 16, 12 and 8 yalms out
+    CHECK(rings.front().size() == static_cast<size_t>(kSpotDirections));
+    CHECK(distance(rings.front().front(), mob) == Catch::Approx(20.0f).margin(0.01f));
+    CHECK(distance(rings.back().front(), mob) == Catch::Approx(8.0f).margin(0.01f));
+    // the ring's first spot is the one on her side of it
+    CHECK(rings.front().front().x == Catch::Approx(-20.0f).margin(0.01f));
+    CHECK(distance(rings.front().front(), her) <= distance(rings.front().back(), her));
+    // a reach under the nearest ring is one ring at that reach
+    const auto close = shotRings(mob, 4.0f, her);
+    REQUIRE(close.size() == 1);
+    CHECK(distance(close.front().front(), mob) == Catch::Approx(4.0f).margin(0.01f));
 }

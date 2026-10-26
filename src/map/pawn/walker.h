@@ -24,6 +24,7 @@
 #include "pawn_danger.h"
 #include "route_search.h"
 #include "safe_walk.h"
+#include "sneak.h"
 
 #include "common/cbasetypes.h"
 #include "common/timer.h"
@@ -32,6 +33,7 @@
 
 #include <chrono>
 #include <optional>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -106,6 +108,12 @@ namespace pawn
 
         // The balls as the route search reads them
         auto toHazards(const std::vector<danger::Sphere>& spheres) -> std::vector<cardian::route::Hazard>;
+
+        // A ball's mob as a sneak-by reads it (pawn/sneak.h): its sight cone
+        // and its reach all round, its walk, the seconds before its rest ends
+        // (its last action plus its roam cool, as the game decides when to
+        // walk again), and its territory
+        auto sneakMobOf(const danger::Sphere& sphere, timer::time_point tick) -> cardian::sneak::Mob;
     } // namespace walker
 
     class Walker
@@ -147,6 +155,16 @@ namespace pawn
             timer::time_point                hopAt;
             float                            hopSeconds = 0.0f;
             bool                             hopWalking = false;
+            // A sneak-by that is a visit (Rules::visitStay): its end is her
+            // point, inside a ring, where she stays; over once she has stayed,
+            // or once her walk is asked to go elsewhere
+            bool                             hopVisit = false;
+            position_t                       hopGoal{};
+            float                            visitIn   = 0.0f; // seconds from its start she reaches her point
+            float                            visitStay = 0.0f;
+            std::optional<timer::time_point> visitArrived;
+            timer::time_point                visitLookedAt;
+            timer::time_point                visitSaidAt;
             timer::time_point                sneakLookedAt;
             timer::time_point                sneakSaidAt;
             cardian::walk::Outcome           outcome = cardian::walk::Outcome::Walking; // what the walk came to at its last tick, for the mover that asked
@@ -168,6 +186,9 @@ namespace pawn
 
         // A sneak-by under way, within its time
         auto sneakingBy(timer::time_point tick) const -> bool;
+
+        // A visit under way (Rules::visitStay), within its time
+        auto visiting(timer::time_point tick) const -> bool;
 
         // Whether a ball's mob sees a point (no wall between), memoised per tick
         auto sees(const danger::Sphere& sphere, const position_t& point, timer::time_point tick) const -> bool;
@@ -197,8 +218,16 @@ namespace pawn
         // that hold it, toward the walk's target. True when she sets out on one
         auto sneakBy(const cardian::walk::Rules& rules) -> bool;
 
+        // Held beside her point inside a ring, every couple of seconds: a
+        // timed visit in to it behind its mobs' backs (sneak.h visit), the
+        // same way out walkable too. True when she sets out on one
+        auto visitTo(const position_t& point, const cardian::walk::Rules& rules) -> bool;
+
         // A sneak-by under way: walked past the mobs; false once it is over
         auto hopTick(bool racing) -> bool;
+
+        // A sneak-by or a visit given up or over: her route planned afresh
+        void endHop(std::string_view how);
 
         CBattleEntity*    owner_;
         WalkHost&         host_;

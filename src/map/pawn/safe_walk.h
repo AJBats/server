@@ -51,6 +51,7 @@ namespace cardian::walk
         float extra      = 0.0f;  // yalms beyond the danger map's buffer round every ring
         float closeTo    = 0.0f;  // the route ends this many yalms short of the point, along it
         bool  curves     = false; // in a town, her corners taken as curves as her path finder is handed them: a walk planned once (an errand's, the lounge's), never one re-planned every tick
+        float visitStay  = 0.0f;  // her point may lie inside a ring: held beside it, a timed visit in to it behind its mobs' backs when one fits (sneak.h visit), this many seconds there; 0 for none
     };
 
     // What the walk came to this tick

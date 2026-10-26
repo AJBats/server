@@ -246,6 +246,7 @@ public:
     // she is through -- no spell, no rest, no item, and the player's order
     // waits as it waits while she is busy (readyToAct)
     auto SneakingBy() const -> bool;
+    auto Visiting() const -> bool; // a sneak-by that is a visit in to her point (walker.h visitTo), within its time
     // Her tactician (tactician_line.h) runs: her rows offer it a tool (a
     // marked row that is on), her gambits are on, and a tactician watches
     // her scope
@@ -857,6 +858,10 @@ private:
         // mob, every ring whole, and, racing with a mob on her, no hold
         bool                      trek       = false;
         bool                      racing     = false;
+        // Her point may lie inside a ring: held beside it, a timed visit in
+        // to it behind its mobs' backs, this many seconds there (walker.h
+        // visitTo; the puller's shot). 0 for none
+        float                     visitStay  = 0.0f;
     };
     auto OrderApproach() -> std::optional<Intent>; // the queued order's walk in, while one is on (see OrderOutOfReach)
 
@@ -1299,9 +1304,16 @@ private:
     // a Pull page list that has a kind on (`list`), the list decides in
     // place of the band: only its kinds that are on, the first kind on it
     // first, the nearest within a kind; `reach` (0: pawn.HUNT_RADIUS) is
-    // how far round the point she looks
+    // how far round the point she looks. The camp's puller (a list, a reach
+    // and her camp) skips no mob for what stands round it: the first of the
+    // best few she can shoot now from a spot outside every ring -- her way
+    // there clear, no kin beside it or on its way back -- else, unless
+    // `readyOnly`, the best she can shoot at all, `waits` saying what she
+    // will wait on at its spot (the user, 2026-10-25: she sets out for it and
+    // waits there; staying in camp is never the puller's call)
     auto PickHuntTarget(const position_t& around, uint8 level, const pawn::HuntRules& rules, std::string* skipped = nullptr,
-                        std::span<const uint32> passOver = {}, std::span<const cardian::pull::ListRow> list = {}, float reach = 0.0f) const -> CMobEntity*;
+                        std::span<const uint32> passOver = {}, std::span<const cardian::pull::ListRow> list = {}, float reach = 0.0f,
+                        bool readyOnly = false, std::string* waits = nullptr) const -> CMobEntity*;
 
     // The walk in on a mob and the draw at the door, shared by party pawns
     // and world bodies (see the definition). True when the tick was hers
@@ -1816,7 +1828,32 @@ private:
     // sight, tags it, says the pull line and runs back to the landing point,
     // where the tank's Provoke takes it off her; she then fights as the
     // Damage seat does. Her pulling kit is worn while she holds the seat
-    // (KitTick), what she wore before put back once she leaves it
+    // (KitTick), what she wore before put back once she leaves it.
+    //
+    // Where she shoots a mob from (the user, 2026-10-25): as far off as her
+    // shot reaches, in its sight, on the ground -- outside every ring of the
+    // party's danger map when any such spot is in reach (`clean`), her way
+    // there passing none (`open`) when one of those is; else the best she
+    // has, which she waits beside, `why` saying what holds it
+    struct ShotSpot
+    {
+        position_t  at{};
+        bool        clean = false;
+        bool        open  = false;
+        std::string why;
+    };
+    // The party's balls a pull is judged by: its own mob left out, padded by
+    // the pull rule's clearance, round her and the mob
+    auto PullBalls(const CMobEntity* PMob) const -> std::vector<pawn::danger::Sphere>;
+    // Her spot for a mob against those balls (pull_math.h shotRings); nullopt
+    // when no ground within her reach of it is in its sight at all
+    auto ShotSpotFor(const CMobEntity* PMob, const std::vector<pawn::danger::Sphere>& balls) const -> std::optional<ShotSpot>;
+    // Waiting beside her spot inside a ring, whether her walker may go in to
+    // it behind its mobs' backs (walker.h visitTo): her shot then goes the
+    // moment she stands there, so the pipeline's time to tag it, read afresh,
+    // must have come, and no kin may stand on its way to her or on hers back
+    auto VisitAllowed(CMobEntity* PMob, const position_t& spot) -> bool;
+
     struct PullRun
     {
         enum class Step : uint8
@@ -1846,9 +1883,15 @@ private:
         std::vector<uint32> camp;
         // Where she runs it in to: past the landing point on her way in (pull_math.h pastLanding)
         std::optional<position_t> backTo;
-        timer::time_point         cleanAt{};  // the walk out's next judgement of the pull's route (PullBlocker)
+        timer::time_point         cleanAt{};  // the walk out's next judgement of her spot (ShotSpotFor)
         timer::time_point         kinSince{}; // her shot held for kin on the way back, since
-        timer::time_point         blockedSince{}; // her walk out held near it, its route unclean, since
+        timer::time_point         blockedSince{}; // her walk out held short of her spot, since
+        std::optional<ShotSpot>   spot;       // where she shoots it from
+        position_t                spotFor{};  // where the mob stood as it was chosen
+        timer::time_point         movingSince{}; // waiting, her walker had her moving again since: the wait ends once that has lasted
+        timer::time_point         visitLookAt{}; // waiting beside a spot inside a ring, her next ask whether a visit may go (VisitAllowed)
+        bool                      visitMay = false; // ... and its answer
+        bool                      visited  = false; // she came to her spot by a visit: the shot goes at once, nothing held inside the ring
     };
     // A mob on the party fighting her now, her own pull aside: she does not
     // leave a fight, nor set out, with one on her -- it would follow her out
@@ -1881,6 +1924,7 @@ private:
     // Another mob she can pull now, the one she holds for passed over: picked as the set-out picks, and kept as the next candidate
     auto                    PullInstead(CCharEntity* PPlayer, const CMobEntity* PHeld) -> CMobEntity*;
     std::string             m_PullSkipped;       // what the last pick passed over and why, said as she sets out
+    std::string             m_PullWaits;         // what the last pick's mob waits on at its spot, empty when she can pull it now
     std::optional<EntityId> m_PullGo;            // the mob the last look said to go for, until the next look
     double                  m_PullGoArrive = 0.0; // and when it should land, seconds from that look
     std::optional<EntityId> m_PullCandidate;     // the next pull, as last picked
@@ -1912,6 +1956,12 @@ private:
     auto PullerSeat() const -> bool; // she holds the party's Puller seat
     auto PullTick(const Place* place, CCharEntity* PPlayer, bool hunting) -> bool;
     void GiveUpPull(const CMobEntity* PMob, std::string_view why, double passOverSeconds = cardian::pull::kPassOverSeconds);
+    // On from the mob she waits on to one she can pull now, from where she
+    // stands, the run kept (its landing time with it); the one left passed
+    // over a short while
+    void RetargetPull(const CMobEntity* PFrom, CMobEntity* PTo, std::string_view why);
+    // Her shot held at her spot: she stands through the walker
+    void HoldForShot(const CMobEntity* PMob);
     void EndPull(std::string_view why);
     void KitTick();
     void SayPull(const std::string& line);

@@ -96,6 +96,14 @@ namespace cardian::stake
         return front > 0.0f ? front : kFront;
     }
 
+    // The camp's ground as the player spaced it: ahead of the flag as far as
+    // its front line (kFront when he chose none), behind it as far as its
+    // backline (kBack when he chose none)
+    inline auto onCampGround(const float flagDistance, const float forward, const float front, const float back) -> bool
+    {
+        return flagDistance <= (forward >= 0.0f ? frontLine(front) : (back > 0.0f ? back : kBack));
+    }
+
     // How far behind the flag the mages stand: the camp's backline (kBack
     // when the player chose none, 0), but never inside the mob's ring -- its
     // reach, less what the mob stands ahead of the flag; 0 when no mob's is

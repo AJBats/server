@@ -4845,6 +4845,7 @@ namespace pawn
         // a target go)
         f.underground = PMob != nullptr && pawn::isUnderground(PMob) && !PMob->PAI->IsEngaged();
         f.heldOff     = heldOff;
+        f.leftBehind  = PMob != nullptr && pawn::leftBehind(pawn::ordersOwnerOf(PSelf), PMob);
         return f;
     }
 

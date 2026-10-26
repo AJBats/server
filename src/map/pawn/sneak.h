@@ -205,4 +205,93 @@ namespace cardian::sneak
         hop.walked = walked;
         return hop;
     }
+
+    // A timed visit (the user, 2026-10-25: the puller in behind a mob's
+    // back): her walk along `route` (her own spot first, the spot she visits
+    // last) at `speed`, setting out `delay` seconds from now, `stay` seconds
+    // at its end, then the same way back out to her own spot. It fits when no
+    // mob reaches any yalm of it, nor the spot while she stays, when she is
+    // there -- every rest taken to end `slack` seconds early, as a sneak-by
+    // takes them
+    struct Visit
+    {
+        bool  fits     = false;
+        float arriveAt = 0.0f; // when she reaches the spot, from now
+        float outAt    = 0.0f; // when she is back on her own spot
+        int   caughtBy = -1;   // fits not: the mob that would reach her
+        float caughtAt = 0.0f; // ... and when, from now
+    };
+
+    inline auto visit(const std::vector<Mob>& mobs, const std::vector<position_t>& route, const float speed, const float delay, const float slack,
+                      const float stay) -> Visit
+    {
+        Visit out;
+        if (route.size() < 2 || speed <= 0.0f)
+        {
+            return out;
+        }
+        const auto caught = [&](const position_t& p, const float t) -> int
+        {
+            for (size_t m = 0; m < mobs.size(); ++m)
+            {
+                if (mobs[m].threatens(p, t, slack))
+                {
+                    return static_cast<int>(m);
+                }
+            }
+            return -1;
+        };
+        // One way along a route from `start` seconds on: when she reaches its
+        // end, or the mob that reaches her first
+        const auto walk = [&](const std::vector<position_t>& way, const float start, float& at) -> bool
+        {
+            float t = start;
+            for (size_t i = 1; i < way.size(); ++i)
+            {
+                const float len   = distance(way[i - 1], way[i]);
+                const int   steps = std::max(1, static_cast<int>(std::ceil(len)));
+                for (int k = 1; k <= steps; ++k)
+                {
+                    const float      f = static_cast<float>(k) / static_cast<float>(steps);
+                    const position_t p(way[i - 1].x + (way[i].x - way[i - 1].x) * f, way[i - 1].y + (way[i].y - way[i - 1].y) * f,
+                                       way[i - 1].z + (way[i].z - way[i - 1].z) * f, 0, 0);
+                    const float      when = t + len * f / speed;
+                    if (const int m = caught(p, when); m >= 0)
+                    {
+                        out.caughtBy = m;
+                        out.caughtAt = when;
+                        return false;
+                    }
+                }
+                t += len / speed;
+            }
+            at = t;
+            return true;
+        };
+        float arrive = 0.0f;
+        if (!walk(route, delay, arrive))
+        {
+            return out;
+        }
+        // the stay, looked at every quarter second
+        for (float t = arrive; t <= arrive + stay; t += 0.25f)
+        {
+            if (const int m = caught(route.back(), t); m >= 0)
+            {
+                out.caughtBy = m;
+                out.caughtAt = t;
+                return out;
+            }
+        }
+        std::vector<position_t> back(route.rbegin(), route.rend());
+        float                   home = 0.0f;
+        if (!walk(back, arrive + stay, home))
+        {
+            return out;
+        }
+        out.fits     = true;
+        out.arriveAt = arrive;
+        out.outAt    = home;
+        return out;
+    }
 } // namespace cardian::sneak

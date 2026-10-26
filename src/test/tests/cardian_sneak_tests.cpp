@@ -9,6 +9,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
+
 using cardian::sneak::Mob;
 
 namespace
@@ -169,4 +171,29 @@ TEST_CASE("Sneak-by: never past the mobs on the way, only a safe end fits", "[ca
     const auto line = cardian::sneak::plan({ m }, toLine, 5.0f, 0.5f, kSlack, kSlack, true);
     REQUIRE(line.fits);
     CHECK(line.points.back().z == 10.0f);
+}
+
+TEST_CASE("Sneak-by: a visit in behind a resting mob's back fits while its rest outlasts the walk, the stay and the way out", "[cardian][sneak]")
+{
+    // from 20 yalms behind the goblin to 6 behind it, out of its cone and its
+    // reach all round, and back: 14 yalms each way at 5 a second, 4 s there
+    const std::vector<position_t> in{ at(-20.0f, 0.0f), at(-6.0f, 0.0f) };
+    const auto                    fits = cardian::sneak::visit({ goblin(30.0f) }, in, 5.0f, 0.5f, kSlack, 4.0f);
+    REQUIRE(fits.fits);
+    CHECK(std::abs(fits.arriveAt - (0.5f + 14.0f / 5.0f)) < 0.01f);
+    CHECK(std::abs(fits.outAt - (fits.arriveAt + 4.0f + 14.0f / 5.0f)) < 0.01f);
+
+    // its rest ends while she stands there: it turns and sees her
+    const auto late = cardian::sneak::visit({ goblin(8.0f) }, in, 5.0f, 0.5f, kSlack, 4.0f);
+    CHECK_FALSE(late.fits);
+    CHECK(late.caughtBy == 0);
+
+    // in front of it, its cone takes her on the way in
+    const std::vector<position_t> front{ at(20.0f, 0.0f), at(10.0f, 0.0f) };
+    CHECK_FALSE(cardian::sneak::visit({ goblin(30.0f) }, front, 5.0f, 0.5f, kSlack, 4.0f).fits);
+
+    // behind it, but inside its reach all round
+    Mob hears      = goblin(30.0f);
+    hears.allRound = 8.0f;
+    CHECK_FALSE(cardian::sneak::visit({ hears }, in, 5.0f, 0.5f, kSlack, 4.0f).fits);
 }

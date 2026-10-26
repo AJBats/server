@@ -175,6 +175,7 @@ namespace cardian::engage
         bool onSelf        = false; // engaged, and its target is her
         bool underground   = false; // below ground with no fight on
         bool heldOff       = false; // her door refused it a moment ago (the hold-off)
+        bool leftBehind    = false; // the party leaves it be until it comes in (pawn.h leaveBehind)
     };
 
     constexpr auto accepts(const Finder finder, const Foe& foe) -> bool
@@ -210,11 +211,12 @@ namespace cardian::engage
     }
 
     // Whether a foe counts when a fight is chosen: one below ground with no
-    // fight on, or one her door holds off, is absent, so the next foe of
-    // its kind, and then the next row, get their turn
+    // fight on, one her door holds off, or one the party leaves be, is
+    // absent, so the next foe of its kind, and then the next row, get their
+    // turn
     constexpr auto foeCounts(const Foe& foe) -> bool
     {
-        return !foe.underground && !foe.heldOff;
+        return !foe.underground && !foe.heldOff && !foe.leftBehind;
     }
 
     // A finder's pick for a new fight: the first foe, in the order the

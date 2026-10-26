@@ -37,6 +37,7 @@
 #include <utility>
 #include <vector>
 
+class CBaseEntity;
 class CBattleEntity;
 class CCharEntity;
 class CMobEntity;
@@ -305,7 +306,28 @@ namespace pawn
     auto strategyOf(uint32 ownerCharID) -> uint16;
     auto isRetreating(uint32 ownerCharID) -> bool;
     void setStrategy(CCharEntity* POwner, uint16 strategy);
+    // Retreat called off leaves behind every mob still on the party
+    // (leaveBehind): what it ran from is not taken up again unless it comes in
     void setRetreat(CCharEntity* POwner, bool on);
+
+    // The mobs his party leaves be (the user, 2026-10-25): what a retreat ran
+    // from, and a mob that cannot chase that caught his puller outside the
+    // camp. None is a fight of the party's (engage_math.h Foe::leftBehind) --
+    // but for the one he fights himself -- nor a camp fight, and one holds
+    // the puller back only while she stands within its spells' reach
+    // (pull_math.h kLeftBehindReach), until it comes in or lets go, either
+    // ending it, as does its death. It comes in onto the camp's ground as he
+    // spaced it while a camp stands; with none, within its reach of a
+    // member's body. In memory, like the orders
+    void leaveBehind(uint32 ownerCharID, const CMobEntity* PMob, std::string_view why);
+    auto leftBehind(uint32 ownerCharID, const CMobEntity* PMob) -> bool;
+    // Whether a body stands on his camp's ground as he spaced it, in the
+    // camp's zone: ahead of the flag within its front line, behind it within
+    // its backline. False with no camp
+    auto onCampGround(uint32 ownerCharID, const CBaseEntity* PEntity) -> bool;
+    // A mob that walks after what it fights: not a worm, which never leaves
+    // its spot in a fight (no speed of its own), nor one held to its spot
+    auto chases(const CMobEntity* PMob) -> bool;
 
     // The stake (RESEARCH §12.16): a place with a heading, one per player,
     // set where he stands and facing his way, held until dissolved. The
