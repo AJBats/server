@@ -79,6 +79,16 @@ namespace cardian::chains
     // A weapon skill from its start to its landing, near enough; and a
     // close needs that much of the window left to land inside it
     inline constexpr double kWsLands = 1.0;
+    // A close behind the closer's Boost (a Monk's marked Boost row): Boost
+    // lands and her weapon skill goes some 0.8 s after it (two ticks), and a
+    // weapon skill held behind Boost may wait up to 2 s for her to be free.
+    // Boost goes first only while the window has that and the weapon skill's
+    // landing left; else the close goes at once
+    inline constexpr double kBoostLead = 2.0;
+    inline auto closeTakesBoost(const double windowLeft) -> bool
+    {
+        return windowLeft > kBoostLead + kWsLands;
+    }
     // An opener's think comes round every 2 to 3 s: half of that, on average
     inline constexpr double kThinkWait = 1.25;
     // A burst's cast must end this much before the window does: more than

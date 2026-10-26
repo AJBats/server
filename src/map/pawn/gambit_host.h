@@ -66,10 +66,11 @@ namespace pawn
         virtual auto FreeToCast(CSpell* PSpell, CBattleEntity* PTarget) -> bool = 0;
         virtual auto Ability(EntityId target, uint16 ability) -> bool = 0;
         virtual auto WeaponSkill(EntityId target, uint16 skill) -> bool = 0;
-        // A weapon skill that closes a skillchain: its window is a few
-        // seconds, so nothing goes ahead of it (a cardian's Boost, or her
-        // walk to the mob's back for Sneak Attack)
-        virtual auto CloseWeaponSkill(EntityId target, uint16 skill) -> bool
+        // A weapon skill that closes a skillchain, `windowLeft` seconds
+        // before what is on the mob wears off: no walk to the mob's back for
+        // Sneak Attack goes ahead of it, and a cardian's Boost only while the
+        // window has the time for it (skillchain_math.h closeTakesBoost)
+        virtual auto CloseWeaponSkill(EntityId target, uint16 skill, double /*windowLeft*/) -> bool
         {
             return WeaponSkill(target, skill);
         }

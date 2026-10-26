@@ -198,9 +198,10 @@ public:
     void DropQueuedRest(std::string_view why); // a rest still queued for the release gives way to his later order
     void EndRestOrder(std::string_view why);
     auto WeaponSkill(EntityId target, uint16 wsid) -> bool override; // her rows' weapon skill; never tried beyond its reach (BoostOrWeaponSkill)
-    // Her rows' weapon skill closing a skillchain: at once, no Boost or Sneak
-    // Attack walk ahead of it -- the window is a few seconds
-    auto CloseWeaponSkill(EntityId target, uint16 wsid) -> bool;
+    // Her rows' weapon skill closing a skillchain: no Sneak Attack walk ahead
+    // of it, and her Boost only while the window, `windowLeft` seconds, has
+    // the time for it (closeTakesBoost)
+    auto CloseWeaponSkill(EntityId target, uint16 wsid, double windowLeft) -> bool;
     // A weapon skill of her rows' held behind Boost or Sneak Attack, or
     // behind her walk to the mob's back for it
     auto WeaponSkillPending() const -> bool;

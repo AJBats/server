@@ -4312,8 +4312,9 @@ namespace pawn
                 return false;
             }
         }
-        const bool started = call.move == cardian::chains::WsMove::Close ? m_host->CloseWeaponSkill(PWsTarget->entityId(), call.skill)
-                                                                            : m_host->WeaponSkill(PWsTarget->entityId(), call.skill);
+        const bool started = call.move == cardian::chains::WsMove::Close
+                                 ? m_host->CloseWeaponSkill(PWsTarget->entityId(), call.skill, v.resonance.has_value() ? v.resonance->left : 0.0)
+                                 : m_host->WeaponSkill(PWsTarget->entityId(), call.skill);
         if (!started)
         {
             hold("the server would not start it");

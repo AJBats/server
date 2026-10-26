@@ -42,6 +42,7 @@
 #include "pawn_items.h"
 #include "pawn_rules.h"
 #include "pull_math.h"
+#include "skillchain_math.h"
 #include "riding.h"
 #include "riding_math.h"
 #include "teleport.h"
@@ -165,9 +166,9 @@ namespace
         {
             return m_controller.WeaponSkill(target, skill);
         }
-        auto CloseWeaponSkill(const EntityId target, const uint16 skill) -> bool override
+        auto CloseWeaponSkill(const EntityId target, const uint16 skill, const double windowLeft) -> bool override
         {
-            return m_controller.CloseWeaponSkill(target, skill);
+            return m_controller.CloseWeaponSkill(target, skill, windowLeft);
         }
         auto WeaponSkillPending() const -> bool override
         {
@@ -8371,15 +8372,24 @@ auto CPawnController::WeaponSkillPending() const -> bool
     return m_HeldWs.has_value() || (m_SneakStep.has_value() && m_SneakStep->wsid != 0);
 }
 
-auto CPawnController::CloseWeaponSkill(const EntityId target, const uint16 wsid) -> bool
+auto CPawnController::CloseWeaponSkill(const EntityId target, const uint16 wsid, const double windowLeft) -> bool
 {
     if (!PrepareRestAction())
     {
         return false;
     }
-    m_WsMark.reset();
+    auto* PTarget = target.resolve<CBattleEntity>();
     FaceTarget(target);
-    HeadLook(target.resolve<CBattleEntity>());
+    HeadLook(PTarget);
+    // Her Boost row's Boost first while the window has the time for it; the
+    // close held behind it goes only on the same opening, let go if
+    // another's weapon skill takes it meanwhile (WsMarkHolds)
+    if (cardian::chains::closeTakesBoost(windowLeft))
+    {
+        m_WsMark = ChainMarkOn(PTarget);
+        return BoostOrWeaponSkill(target, wsid);
+    }
+    m_WsMark.reset();
     return FireWeaponSkill(target, wsid);
 }
 

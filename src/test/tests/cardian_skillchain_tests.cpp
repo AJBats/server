@@ -262,6 +262,20 @@ TEST_CASE("skillchains: her weapon skill closes what is on the mob once the wind
     CHECK(call(v).move == WsMove::Close);
 }
 
+TEST_CASE("skillchains: a close goes behind the closer's Boost only while the window has the time for it", "[cardian][skillchains]")
+{
+    using cardian::chains::closeTakesBoost;
+    using cardian::chains::kOpeningLasts;
+    using cardian::chains::kWindowOpens;
+
+    // the window just open: most of the opening left, Boost goes first
+    CHECK(closeTakesBoost(kOpeningLasts - kWindowOpens));
+    // late in the window: the close goes at once
+    CHECK_FALSE(closeTakesBoost(cardian::chains::kBoostLead + cardian::chains::kWsLands));
+    CHECK_FALSE(closeTakesBoost(1.5));
+    CHECK_FALSE(closeTakesBoost(0.0));
+}
+
 TEST_CASE("skillchains: she keeps clear of an opening or a chain she cannot close while somebody will use it", "[cardian][skillchains]")
 {
     auto v      = warrior();
