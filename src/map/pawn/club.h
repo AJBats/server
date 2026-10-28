@@ -85,6 +85,12 @@ namespace pawn::club
     // anyone else (a guest in his party is not a member)
     auto memberOf(const CCharEntity* PPlayer, uint32 charid) -> std::optional<Member>;
 
+    // The Party screen's Invite: his party invite, sent for him, to a
+    // member of his club -- stood first when faded; one wearing his pearl is
+    // asked as an open contract is. CL_S_OK, else why not; CL_S_DECLINES
+    // with her words in `line`
+    auto invite(CCharEntity* PPlayer, uint32 charid, std::string& line) -> uint16;
+
     // Every member of his club, by name, charid first
     auto membersOf(const CCharEntity* PPlayer) -> std::vector<std::pair<uint32, Member>>;
 

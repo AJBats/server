@@ -26,6 +26,7 @@
 
 #include "cardian_link.h"
 #include "club.h"
+#include "party_away.h"
 #include "club_math.h"
 #include "gate_guards.h"
 #include "link_api.h"
@@ -1697,11 +1698,16 @@ namespace pawn::errands
             r.errand.kind    = kind;
             r.errand.state   = State::Going;
             r.errand.started = gameNow();
-            reply.finish(ask, kind == Kind::Gear    ? sendGear(PChar, std::move(r))
-                              : kind == Kind::Rank  ? sendRank(PChar, std::move(r), ask)
-                              : kind == Kind::Money ? sendMoney(PChar, std::move(r), ask)
-                              : kind == Kind::Level ? sendLevel(PChar, std::move(r), ask)
-                                                    : sendQuest(PChar, std::move(r), ask));
+            const auto status = kind == Kind::Gear    ? sendGear(PChar, std::move(r))
+                                : kind == Kind::Rank  ? sendRank(PChar, std::move(r), ask)
+                                : kind == Kind::Money ? sendMoney(PChar, std::move(r), ask)
+                                : kind == Kind::Level ? sendLevel(PChar, std::move(r), ask)
+                                                      : sendQuest(PChar, std::move(r), ask);
+            if (status == CL_S_OK)
+            {
+                pawn::away::end(PChar, ask.cardian, "a venture he sent her on"); // her place in his party ends with it
+            }
+            reply.finish(ask, status);
         }
 
         void callBack(CCharEntity* PChar, const cl_call_back& ask, Reply& reply)

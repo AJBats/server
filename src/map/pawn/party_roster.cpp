@@ -22,6 +22,7 @@
 #include "party_roster.h"
 
 #include "cardian_link_messages.h"
+#include "party_away.h"
 #include "pawn.h"
 #include "pawn_spellbook.h"
 #include "teleport.h"
@@ -175,6 +176,7 @@ namespace pawn::roster
                 settled.held       = cardian::party::settle(factsOf(PPlayer, members));
                 settled.at         = now;
                 sayChanges(PPlayer, members, settled.held);
+                pawn::away::note(PPlayer, members);
             }
             return settled.held;
         }

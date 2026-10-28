@@ -115,6 +115,9 @@ namespace cardian::link
     X(PARTY_ROLES, cl_party_roles) \
     X(PARTY_ROLE, cl_party_role) \
     X(SET_PARTY_ROLE, cl_set_party_role) \
+    X(PARTY_AWAY, cl_party_away) \
+    X(SEAT_INVITE, cl_seat_invite) \
+    X(SEAT_RELEASE, cl_seat_release) \
     X(SKILLCHAINS, cl_skillchains) \
     X(SKILLCHAIN, cl_skillchain) \
     X(SET_SKILLCHAIN, cl_set_skillchain) \

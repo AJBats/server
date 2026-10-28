@@ -35,6 +35,7 @@
 #include "ls_bank.h"
 #include "mog_house.h"
 #include "offers.h"
+#include "party_away.h"
 #include "party_finder.h"
 #include "party_roster.h"
 #include "pawn_gambits.h"
@@ -1670,11 +1671,62 @@ namespace pawn::linkapi
             return count;
         }
 
+        // His party's away members, after its members (party_away.h): each
+        // as an answer, in seat order, no more than the party has room for.
+        // How many were sent
+        auto sendPartyAway(CCharEntity* PChar, const uint8 members, Reply& reply) -> uint8
+        {
+            static_assert(CL_AWAY_ALT == static_cast<int>(pawn::away::Kind::Alt) && CL_AWAY_OWNED == static_cast<int>(pawn::away::Kind::Owned) &&
+                          CL_AWAY_CONTRACT == static_cast<int>(pawn::away::Kind::Contract) && CL_AWAY_PEARL == static_cast<int>(pawn::away::Kind::Pearl),
+                          "the Link's away kinds are party_away.h's");
+            constexpr uint8 kSeats = 6;
+            uint8           count  = 0;
+            for (const auto& seat : pawn::away::of(PChar))
+            {
+                if (members + count >= kSeats)
+                {
+                    break;
+                }
+                auto msg      = make<cl_party_away>();
+                msg.member    = seat.charid;
+                msg.mainJob   = seat.job;
+                msg.mainLevel = seat.level;
+                msg.subJob    = seat.sjob;
+                msg.subLevel  = seat.slvl;
+                msg.kind      = static_cast<uint8_t>(seat.kind);
+                msg.zone      = seat.zone;
+                setText(msg.name, seat.name);
+                reply.more(msg);
+                ++count;
+            }
+            return count;
+        }
+
         void partyRoles(CCharEntity* PChar, const cl_party_roles& ask, Reply& reply)
         {
             auto answer  = ask;
             answer.count = sendPartyRoles(PChar, reply);
+            answer.away  = sendPartyAway(PChar, answer.count, reply);
             reply.finish(answer, CL_S_OK);
+        }
+
+        // An away member invited back, or released: the roles and the away
+        // members come back as they now stand, then the outcome
+        void seatInvite(CCharEntity* PChar, const cl_seat_invite& ask, Reply& reply)
+        {
+            std::string line;
+            const auto  status = pawn::away::invite(PChar, ask.member, line);
+            sendPartyAway(PChar, sendPartyRoles(PChar, reply), reply);
+            auto answer = ask;
+            setText(answer.line, line);
+            reply.finish(answer, status);
+        }
+
+        void seatRelease(CCharEntity* PChar, const cl_seat_release& ask, Reply& reply)
+        {
+            const auto status = pawn::away::release(PChar, ask.member);
+            sendPartyAway(PChar, sendPartyRoles(PChar, reply), reply);
+            reply.finish(ask, status);
         }
 
         // The player's choice of a member's role, or his taking it back
@@ -1695,7 +1747,7 @@ namespace pawn::linkapi
             {
                 status = pawn::roster::choose(PChar, ask.member, static_cast<cardian::party::Role>(ask.role));
             }
-            sendPartyRoles(PChar, reply);
+            sendPartyAway(PChar, sendPartyRoles(PChar, reply), reply);
             reply.finish(ask, status);
         }
 
@@ -3136,6 +3188,8 @@ namespace pawn::linkapi
         handle<cl_set_strategy>(setStrategy);
         handle<cl_set_hunt>(setHunt);
         handle<cl_party_roles>(partyRoles);
+        handle<cl_seat_invite>(seatInvite);
+        handle<cl_seat_release>(seatRelease);
         handle<cl_set_party_role>(setPartyRole);
         handle<cl_skillchains>(skillchains);
         handle<cl_set_skillchain>(setSkillchain);

@@ -1461,7 +1461,7 @@ namespace pawn::finder
         {
             const auto name = pawn::seats::nameOf(charid);
             PPlayer->pushPacket<GP_SERV_COMMAND_MESSAGE>(PPlayer, 0, 0, MsgStd::InvitationDeclined);
-            PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPlayer, MESSAGE_SYSTEM_3, fmt::format("{} joins a party only through the Party Finder.", name));
+            PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPlayer, MESSAGE_SYSTEM_3, fmt::format("{} joins a party only through a Shout.", name));
             ShowInfoFmt("pawn: {} invites {} by name; refused, she is the world's (the Party Finder recruits her)", PPlayer->getName(), name);
             return true;
         }

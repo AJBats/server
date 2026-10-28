@@ -30,6 +30,7 @@
 #include "stake_math.h"
 #include "stake_flag.h" // CARDIAN TRIAL: the stake's flag
 #include "pawn_danger.h"
+#include "party_away.h"
 #include "party_finder.h"
 #include "party_roster.h"
 #include "pawn_items.h"
@@ -1348,6 +1349,7 @@ namespace pawn
                 {
                     pawn::seats::noteParted(charid);
                 }
+                pawn::away::left(herPlayer, PPawn.get()); // a seat kept, her seeking-party flag up
                 playerByPawn.erase(charid);
                 clearWalkOrder(charid); // out of the party, no longer his to walk
             }

@@ -35,7 +35,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 100: CL_MEMBER_HIRED and
+// compatible, the user, 2026-09-14). 101: his party's away members, PARTY_AWAY,
+// SEAT_INVITE, SEAT_RELEASE, PARTY_ROLES' away and CL_S_NO_SEAT; 100: CL_MEMBER_HIRED and
 // CL_S_TELEPORT_ONLY, a hired White Mage locked; 99: CONTRACTS' shout, the one the server
 // still holds for him, and CL_S_TELEPORT_IN_TOWN; 98: the teleport shout -- CL_GOAL_TELEPORT,
 // a GOAL for each crag whose gate crystal he holds, SHOUT_RESPONDER's price
@@ -184,7 +185,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 100 };
+enum { CL_PROTOCOL = 101 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -257,6 +258,7 @@ enum
     CL_S_NOT_IN_PARTY      = 0x0126, // nobody by that charid is in his party
     CL_S_CAMP_TOO_FAR      = 0x0127, // a camp placed beyond pawn.STAKE_PLACE_REACH of him
     CL_S_CAMP_OFF_MESH     = 0x0128, // no ground to stand a camp on at the spot placed
+    CL_S_NO_SEAT           = 0x0129, // not one of his party's away members
 
     // One cardian's orders
     CL_S_NOT_KNOCKED_OUT   = 0x0130, // a home point is for a KO'd cardian
@@ -1254,6 +1256,9 @@ enum
     CL_T_PULL_STATE     = 0x041D,
     CL_T_MOBS_NEAR      = 0x041E,
     CL_T_MOB_NEAR       = 0x041F,
+    CL_T_PARTY_AWAY     = 0x0420,
+    CL_T_SEAT_INVITE    = 0x0421,
+    CL_T_SEAT_RELEASE   = 0x0422,
 };
 
 // One-way, a stream like pos: direct control's walk order (pawn.h), walk her
@@ -1542,13 +1547,64 @@ typedef struct cl_party_role
 } cl_party_role;
 
 // His party's roles: each member comes as a PARTY_ROLE answer (CL_F_MORE), the
-// player first and then in the order the party holds them, then this
+// player first and then in the order the party holds them, then each of his
+// party's away members as a PARTY_AWAY answer (CL_F_MORE), then this
 typedef struct cl_party_roles
 {
     cl_header h;
     uint8_t   count;    // answered: members sent
-    uint8_t   spare[3];
+    uint8_t   away;     // answered: away members sent
+    uint8_t   spare[2];
 } cl_party_roles;
+
+// Who an away member is to him (pawn/party_away.h)
+enum
+{
+    CL_AWAY_ALT      = 0, // a character of his own account
+    CL_AWAY_OWNED    = 1, // a cardian his account owns
+    CL_AWAY_CONTRACT = 2, // one of the world's his contract holds
+    CL_AWAY_PEARL    = 3, // one of the world's his linkshell's pearl holds
+};
+
+// One of his party's away members (pawn/party_away.h): a cardian who holds a
+// seat in his party and is out of it -- a logout, a crash, a contract not yet
+// joined -- and whom one press invites back. Kept until his kick, his leaving
+// the party, a venture or her release closes the seat. An
+// answer to PARTY_ROLES, SET_PARTY_ROLE, SEAT_INVITE and SEAT_RELEASE, in the
+// order she first joined him
+typedef struct cl_party_away
+{
+    cl_header h;
+    uint32_t  member;    // charid
+    char      name[16];
+    uint8_t   mainJob;
+    uint8_t   mainLevel;
+    uint8_t   subJob;
+    uint8_t   subLevel;
+    uint8_t   kind;      // CL_AWAY_*
+    uint8_t   spare;
+    uint16_t  zone;      // where she is, 0 when not known
+} cl_party_away;
+
+// An away member invited back from the Party screen, or one of his
+// linkshell's from an open seat's Invite from linkshell. Release: one his contract holds is
+// released as Your contract releases her, and any other is only taken off
+// his party's away list. The roles and the away members come back as they
+// now stand (PARTY_ROLE, PARTY_AWAY, CL_F_MORE) ahead of the outcome.
+// Refused CL_S_NO_SEAT for one who is not his party's away member, else as
+// the invite or the release refuses
+typedef struct cl_seat_invite
+{
+    cl_header h;
+    uint32_t  member;   // charid
+    char      line[96]; // answered with CL_S_DECLINES: hers, for people
+} cl_seat_invite;
+
+typedef struct cl_seat_release
+{
+    cl_header h;
+    uint32_t  member;   // charid
+} cl_seat_release;
 
 // The player's choice of a member's role, or, with CL_ROLE_AUTO, his taking
 // it back. The roles come back as they now stand (PARTY_ROLE, CL_F_MORE) ahead

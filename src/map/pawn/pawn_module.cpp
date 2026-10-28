@@ -44,6 +44,7 @@
 #include "redress.h"
 #include "riding.h"
 #include "food.h"
+#include "party_away.h"
 #include "pull.h"
 #include "spell_bank.h"
 #include "tactics.h"
@@ -63,6 +64,9 @@
 #include "packets/c2s/0x01a_action.h"
 #include "packets/c2s/0x05b_eventend.h"
 #include "packets/c2s/0x06e_group_solicit_req.h"
+#include "packets/c2s/0x06f_group_leave.h"
+#include "packets/c2s/0x070_group_breakup.h"
+#include "packets/c2s/0x071_group_strike.h"
 #include "lua/lua_base_entity.h"
 #include "lua/luautils.h"
 #include "packets/basic.h"
@@ -74,6 +78,7 @@
 #include <algorithm>
 #include <cmath>
 #include <magic_enum/magic_enum.hpp>
+#include <cstring>
 #include <string>
 #include <utility>
 #include <vector>
@@ -277,6 +282,7 @@ class PawnModule : public CPPModule
         // house, likewise (redress.h)
         pawn::redress::ensureTable();
         pawn::food::ensureTable();
+        pawn::away::ensureTable();
         // The census's pull kits, likewise (pull.h)
         pawn::pull::ensureTable();
         // The cohort each real character's job rides, likewise (cohort_play.h)
@@ -864,6 +870,29 @@ class PawnModule : public CPPModule
             if (PLive != nullptr && (action == GP_CLI_COMMAND_ACTION_ACTIONID::AttackOff || action == GP_CLI_COMMAND_ACTION_ACTIONID::Talk))
             {
                 PLive->LeavingByHand();
+            }
+        }
+        else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_GROUP_STRIKE))
+        {
+            if (const auto* strike = packet.as<GP_CLI_COMMAND_GROUP_STRIKE>();
+                static_cast<GP_CLI_COMMAND_GROUP_STRIKE_KIND>(strike->Kind) == GP_CLI_COMMAND_GROUP_STRIKE_KIND::Party)
+            {
+                const auto* raw = reinterpret_cast<const char*>(strike->sName);
+                return pawn::away::kick(PChar, std::string(raw, strnlen(raw, sizeof(strike->sName))));
+            }
+        }
+        else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_GROUP_LEAVE))
+        {
+            if (packet.as<GP_CLI_COMMAND_GROUP_LEAVE>()->Kind == PartyKind::Party)
+            {
+                pawn::away::leaveParty(PChar, "he leaves his party");
+            }
+        }
+        else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_GROUP_BREAKUP))
+        {
+            if (packet.as<GP_CLI_COMMAND_GROUP_BREAKUP>()->Kind == PartyKind::Party)
+            {
+                pawn::away::leaveParty(PChar, "he breaks up his party");
             }
         }
         else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_GROUP_SOLICIT_REQ))

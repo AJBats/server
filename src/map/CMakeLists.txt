@@ -150,6 +150,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_scrolls.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/scrolls.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/town_walk_math.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/party_away.cpp
 )
 
 set(MAP_CORE_SOURCES

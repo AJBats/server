@@ -1648,30 +1648,32 @@ namespace pawn::club
             return CL_S_OK;
         }
 
-        void invite(CCharEntity* PChar, const cl_club_invite& ask, Reply& reply)
+        void askInvite(CCharEntity* PChar, const cl_club_invite& ask, Reply& reply)
         {
-            const auto member = memberOf(PChar, ask.cardian);
-            if (!member.has_value())
-            {
-                reply.finish(ask, CL_S_NOT_IN_CLUB);
-                return;
-            }
-            if (pawn::errands::viewOf(ask.cardian).has_value())
-            {
-                reply.finish(ask, CL_S_ON_ERRAND);
-                return;
-            }
-            if (*member == Member::Wild)
-            {
-                // Her pearl holds her for him as an open contract does: his
-                // invite needs no shout, and the finder's own invite asks her
-                std::string line;
-                reply.finish(ask, pawn::finder::invite(PChar, ask.cardian, pawn::finder::Goal{}, line));
-                return;
-            }
-            reply.finish(ask, inviteOwn(PChar, ask.cardian));
+            std::string line;
+            reply.finish(ask, pawn::club::invite(PChar, ask.cardian, line));
         }
     } // namespace
+
+    auto invite(CCharEntity* PPlayer, const uint32 charid, std::string& line) -> uint16
+    {
+        const auto member = memberOf(PPlayer, charid);
+        if (!member.has_value())
+        {
+            return CL_S_NOT_IN_CLUB;
+        }
+        if (pawn::errands::viewOf(charid).has_value())
+        {
+            return CL_S_ON_ERRAND;
+        }
+        if (*member == Member::Wild)
+        {
+            // Her pearl holds her for him as an open contract does: his
+            // invite needs no shout, and the finder's own invite asks her
+            return pawn::finder::invite(PPlayer, charid, pawn::finder::Goal{}, line);
+        }
+        return inviteOwn(PPlayer, charid);
+    }
 
     void load()
     {
@@ -1682,7 +1684,7 @@ namespace pawn::club
     void registerHandlers()
     {
         cardian::link::handle<cl_club>(club);
-        cardian::link::handle<cl_club_invite>(invite);
+        cardian::link::handle<cl_club_invite>(askInvite);
         cardian::link::handle<cl_pearl>(pearl);
         cardian::link::handle<cl_club_recruit>(askRecruit);
     }
