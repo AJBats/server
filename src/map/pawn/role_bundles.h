@@ -157,6 +157,7 @@ namespace pawn::bundles
     // enums in pawn_gambits.cpp)
     inline constexpr uint16 kSpellCure    = 1;
     inline constexpr uint16 kSpellPoisona = 14; // the first -na a job learns
+    inline constexpr uint16 kSpellRegen   = 108;
     inline constexpr uint16 kProvoke      = 35;
 
     // Whether her two jobs can ever use what a tool needs. levelOf(need,
@@ -191,8 +192,8 @@ namespace pawn::bundles
     }
 
     // A seat's tools, every one, in the bundle's order of priority.
-    //  - Healer: the marked rows the tactician cures and takes ailments off
-    //    through, then, for a main job that bursts as a healer, her
+    //  - Healer: the marked rows the tactician cures, regens and takes
+    //    ailments off through (Regen for a job that learns it), then, for a main job that bursts as a healer, her
     //    tactician's nukes, marked (`Damage spell (any)`, burstsAsHealer):
     //    from the Healer seat they go for a burst alone, the Black Mage's
     //    judgement of it, and a routine cure of hers waits for a burst due
@@ -235,6 +236,7 @@ namespace pawn::bundles
         namespace t = cardian::tactician;
         static const std::vector<Tool> healer{
             { "1|101:0|2:0:1|0", { K::Spell, kSpellCure } },       // * Ally -> Cure (best)
+            { "1|101:0|2:0:28|0", { K::Spell, kSpellRegen } },     // * Ally -> Regen (best)
             { "1|101:0|2:0:4|0", { K::Spell, kSpellPoisona } },    // * Ally -> -na (best)
             { "2|101:0|2:3:0|0", { K::Anyone, 0, false, false, false, true } }, // * Foe -> Damage spell (any): her bursts
             { "2|101:0|2:100:0|0", { K::Enfeeble, 0, false, false, true } }, // * Foe -> Enfeeble

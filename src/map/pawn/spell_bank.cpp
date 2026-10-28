@@ -1585,6 +1585,32 @@ namespace pawn::tactics
             return static_cast<int32>(res.get<double>(0));
         }
 
+        auto expectedRegen(CBattleEntity* PCaster, CSpell* PSpell, CBattleEntity* PTarget) -> std::optional<std::pair<double, double>>
+        {
+            if (PCaster == nullptr || PSpell == nullptr || PTarget == nullptr)
+            {
+                return std::nullopt;
+            }
+            auto fn = bankFunction("expectedRegen");
+            if (!fn.has_value())
+            {
+                return std::nullopt;
+            }
+            sol::table s    = ::lua.create_table();
+            s["id"]         = static_cast<uint16>(PSpell->getID());
+            s["element"]    = PSpell->getElement();
+            s["skillType"]  = static_cast<uint8>(PSpell->getSkillType());
+            s["spellGroup"] = static_cast<uint8>(PSpell->getSpellGroup());
+            s["family"]     = static_cast<uint16>(PSpell->getSpellFamily());
+            s["name"]       = PSpell->getName();
+            auto res        = (*fn)(CLuaBaseEntity(PCaster), CLuaBaseEntity(PTarget), s);
+            if (failed("expectedRegen", res) || res.get_type(0) != sol::type::number || res.get_type(1) != sol::type::number)
+            {
+                return std::nullopt;
+            }
+            return std::pair{ res.get<double>(0), res.get<double>(1) };
+        }
+
         // The formula's number when it answers, known; the learned estimate
         // when it does not (Rapture up, or the sampler failed), a floor
         // until an uncapped cure has taught it

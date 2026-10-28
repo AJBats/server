@@ -409,7 +409,7 @@ TEST_CASE("tactician: the default sets mean what they say", "[cardian][gambits][
     // the tactician's tools first (her cures, her rest), then her orders
     // (her weapon skill, rest and eat with the player, avoid aggro), and her
     // marked Attack row (off: the melee mage's switch) last
-    CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order, State::Order, State::Tool });
+    CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order, State::Order, State::Tool });
 
     // a melee set: the trio, her tactician's weapon skill (ROADMAP slice
     // 3h), rest and eat with the player, avoid aggro

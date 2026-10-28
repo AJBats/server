@@ -241,6 +241,9 @@ namespace pawn::tactics
     // Seconds of life a mob of her party's fight has left at the party's
     // rate (the same reading as KneelRisk's fightLeft); negative: unknown
     auto lifeLeft(CCharEntity* PPawn, const CMobEntity* PMob) -> double;
+    // Seconds her party's fight has left at its rate, its longest-lived mob
+    // read; negative: unknown
+    auto fightLeft(CCharEntity* PPawn) -> double;
     void resetRestMemory(CCharEntity* PPawn);
     // Her recovery is due, as the rest planner last said, read without
     // sampling her MP again (restAdvice samples): what her tactician's

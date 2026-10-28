@@ -24,6 +24,8 @@
 #include "fight_log.h"
 #include "pawn.h"
 #include "pawn_gambits.h"
+#include "regen_math.h"
+#include "role_support.h"
 #include "tactics.h"
 
 #include "common/logging.h"
@@ -659,13 +661,27 @@ namespace pawn::tactics
             const uint16 asked = order ? ownAsk(n, PCaster->id) : uint16(0);
             // The role's own cure, and any mage's top-up of a cure in flight:
             // the biggest tier she may cast that lands whole on the gap the
-            // cures in flight leave (bank_math.h pickWhole). A top-up of a
-            // row that names its spell casts that spell only if it lands whole
+            // cures in flight, a Regen on her and her healer's Regen proposed
+            // for her leave (bank_math.h pickWhole). A role cure in a fight
+            // waits until that gap reaches its buffer (cureBuffer). A top-up of a row that names
+            // its spell casts that spell only if it lands whole
             if (n.lockedBy != 0 || !order)
             {
-                const auto  in    = m_incoming.find(PTarget->id);
-                const int32 gap   = PTarget->GetMaxHP() - PTarget->health.hp - (in != m_incoming.end() ? in->second : 0);
-                auto        tiers = allowedTiers();
+                const auto  in      = m_incoming.find(PTarget->id);
+                const int32 missing = PTarget->GetMaxHP() - PTarget->health.hp - (in != m_incoming.end() ? in->second : 0);
+                int32       buffer  = 0;
+                int32       coming  = 0;
+                for (const auto& r : n.requests)
+                {
+                    buffer = r.source == Source::Role ? std::max(buffer, r.buffer) : buffer;
+                    coming = r.source == Source::Role ? std::max(coming, r.coming) : coming;
+                }
+                const int32 gap = cardian::regen::gapAfter(cardian::regen::gapAfter(missing, role::regenLeft(PTarget)), coming);
+                if (gap < buffer)
+                {
+                    return static_cast<SpellID>(0);
+                }
+                auto tiers = allowedTiers();
                 if (asked != 0)
                 {
                     std::erase_if(tiers, [asked](const bank::CureTier& tier)

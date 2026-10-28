@@ -45,6 +45,10 @@ namespace pawn::tactics::role
     };
     auto threat(FightLog& log, CBattleEntity* PMember, double now) -> Threat;
 
+    // What the Regen a member wears will still heal, by its own power and
+    // the ticks left of its run (regen_math.h); 0 with none on her
+    auto regenLeft(const CBattleEntity* PMember) -> int32;
+
     // The Support Mage role's feeders (RESEARCH §12.2 item 2, §12.6,
     // §12.14): one row switches it on, and it stands on its own with no
     // other row. Any job may hold it; nothing here reads her job, only

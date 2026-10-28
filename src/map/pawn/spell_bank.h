@@ -33,6 +33,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 class CBattleEntity;
@@ -129,6 +130,12 @@ namespace pawn::tactics
         // target's own cure bonus when one is named. Nothing while she has
         // Rapture, which the formula's last step would consume
         auto expectedCure(CBattleEntity* PCaster, CSpell* PSpell, CBattleEntity* PTarget = nullptr) -> std::optional<int32>;
+
+        // What a Regen tier would put on the target: its own script run with
+        // the caster on a stand-in of her (tactics_bank.lua expectedRegen),
+        // so the caster's gear, merits and job points count. The HP each
+        // tick heals and the seconds it lasts; nothing when it cannot be read
+        auto expectedRegen(CBattleEntity* PCaster, CSpell* PSpell, CBattleEntity* PTarget) -> std::optional<std::pair<double, double>>;
 
         // A Cure would do nothing for her: a character missing no HP and
         // awake (a Cure wakes a sleeping member at any HP). No Cure, a row's

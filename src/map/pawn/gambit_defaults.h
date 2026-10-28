@@ -74,17 +74,20 @@ namespace pawn
     //    Attack (right before her weapon skill, from the mob's back). Eat
     //    with the player (RESEARCH §19) eats her party role's food when he
     //    has food on and she has none.
-    //  - Mage: the tactician's tools first -- the Cure, the -na and the
-    //    enfeebles left to its judgement, so curing outranks everything
-    //    below, and her rest, the MP pacing -- then her weapon skill and
+    //  - Mage: the tactician's tools first -- the Cure, the Regen (her
+    //    top-up of choice once she learns it, role_support.cpp), the -na
+    //    and the enfeebles left to its judgement, so curing outranks
+    //    everything below, and her rest, the MP pacing -- then her weapon skill and
     //    Rest with the player and Eat with the player as orders (a Healer's
     //    cookie waits for her kneel), and her Attack row, marked and
     //    shipped unchecked: checking it makes her a melee mage whose
     //    tactician leaves a fight to rest (RESEARCH §14.12 decisions 19
     //    and 20; an unmarked Attack row would be an order that keeps her
     //    in). With tools to offer a fight she attends it at cure range
-    //    without engaging. The Black Mage adds her nukes, marked, after the
-    //    enfeebles (RESEARCH §17.13): her tactician's when and which.
+    //    without engaging. The Black Mage's main job learns no Regen, and
+    //    her set has no row of it (a White Mage support's comes with the
+    //    Healer seat); she adds her nukes, marked, after the enfeebles (RESEARCH
+    //    §17.13): her tactician's when and which.
     // The weapon skill row is in every set (the user, 2026-09-26): it costs
     // nothing, and comes up only once she is engaged with the TP for one;
     // a melee set's is the tactician's (the damage kit, ROADMAP slice 3h), a
@@ -140,6 +143,7 @@ namespace pawn
         };
         static const std::vector<std::pair<std::string, bool>> mage{
             { "1|101:0|2:0:1|0", true },   // * Ally -> Cure (best)
+            { "1|101:0|2:0:28|0", true },  // * Ally -> Regen (best)
             { "1|101:0|2:0:4|0", true },   // * Ally -> -na (best)
             { "2|101:0|2:100:0|0", true }, // * Foe -> Enfeeble
             { "0|101:0|100:14:1|0", true }, // * Self -> Rest

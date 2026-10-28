@@ -436,6 +436,12 @@ namespace pawn::tactics
             }
 
         public:
+            // The fight's seconds left, as fightLeft reads it; negative when unknown
+            auto fightLeftNow(const double at) -> double
+            {
+                return fightLeft(at).first;
+            }
+
             // One open fight's mob: seconds of life it has left at the party's
             // rate, as fightLeft reads it; negative when unknown
             auto lifeLeft(const uint32 mobId, const double at) -> double
@@ -1363,6 +1369,12 @@ namespace pawn::tactics
     {
         auto* tactician = PPawn != nullptr && PMob != nullptr ? find(PPawn) : nullptr;
         return tactician != nullptr ? tactician->lifeLeft(PMob->id, seconds(timer::now())) : -1.0;
+    }
+
+    auto fightLeft(CCharEntity* PPawn) -> double
+    {
+        auto* tactician = PPawn != nullptr ? find(PPawn) : nullptr;
+        return tactician != nullptr ? tactician->fightLeftNow(seconds(timer::now())) : -1.0;
     }
 
     auto recoveryDue(const CCharEntity* PPawn) -> bool

@@ -189,7 +189,7 @@ TEST_CASE("gambit layers: the first row to speak for a behaviour wins, across bo
     CHECK(behavior(wild, pawn::Behavior::RestWithPlayer) == uint16{ 1 });
     CHECK_FALSE(behavior(wild, pawn::Behavior::Rest).has_value());
     // a plain Rest row speaks as any switch does
-    own.push_back({ "8", *pawn::text::parseRow("0|0:0|100:14:1|0"), true });
+    own.push_back({ "11", *pawn::text::parseRow("0|0:0|100:14:1|0"), true });
     CHECK(behavior(behaviorsOf(layersFor<Row>(false, world, own)), pawn::Behavior::Rest) == uint16{ 1 });
     own.pop_back();
 
@@ -203,14 +203,14 @@ TEST_CASE("gambit layers: the first row to speak for a behaviour wins, across bo
     // A world row speaks before her own for the same behaviour: the world's
     // formation row (none ships; a hand-edited file) would outrank hers in
     // the wild
-    own.push_back({ "9", *pawn::text::parseRow("0|0:0|100:4:2|0"), true }); // Self -> Formation: flank left
+    own.push_back({ "12", *pawn::text::parseRow("0|0:0|100:4:2|0"), true }); // Self -> Formation: flank left
     auto worldSeat = worldRows({ "0|0:0|100:4:6|0" }, next);           // Self -> Formation: behind
     const auto both = behaviorsOf(layersFor<Row>(true, worldSeat, own));
     CHECK(behavior(both, pawn::Behavior::Formation) == uint16{ 6 });
     CHECK(behavior(behaviorsOf(layersFor<Row>(false, worldSeat, own)), pawn::Behavior::Formation) == uint16{ 2 });
 
     // An unchecked row of hers does not speak; the next one does
-    own[5].enabled  = false; // rest with the player
+    own[6].enabled  = false; // rest with the player
     const auto some = behaviorsOf(layersFor<Row>(false, world, own));
     CHECK_FALSE(behavior(some, pawn::Behavior::RestWithPlayer).has_value());
     CHECK(behavior(behaviorsOf(layersFor<Row>(true, world, own)), pawn::Behavior::RestWithPlayer) == uint16{ 1 });
@@ -363,6 +363,10 @@ namespace
         {
             return job == xi::Job::WHM ? 6 : 0;
         }
+        if (need.kind == K::Spell && need.id == pawn::bundles::kSpellRegen)
+        {
+            return job == xi::Job::WHM || job == xi::Job::RDM ? 21 : 0;
+        }
         if (need.kind == K::Enfeeble)
         {
             // the first debuff her tactician prices: Dia, Poison
@@ -382,9 +386,15 @@ namespace
         return pawn::bundles::bundleFor(role, main, sub, caps, toolLevel);
     }
 
-    // The bundles the fit cases lend: Healer's to a Warrior / White Mage
-    // (every row of it), Tank's and Damage's to a Warrior
-    const std::vector<std::pair<std::string, bool>> kHealer = bundle(cardian::party::Role::Healer, xi::Job::WAR, xi::Job::WHM);
+    // The bundles the fit cases lend: a Healer's Cure, -na, Enfeeble and
+    // Rest (the seat lends a White Mage its Regen too, checked apart), Tank's
+    // and Damage's to a Warrior
+    const std::vector<std::pair<std::string, bool>> kHealer{
+        { "1|101:0|2:0:1|0", true },    // * Ally -> Cure (best)
+        { "1|101:0|2:0:4|0", true },    // * Ally -> -na (best)
+        { "2|101:0|2:100:0|0", true },  // * Foe -> Enfeeble
+        { "0|101:0|100:14:1|0", true }, // * Self -> Rest
+    };
     const std::vector<std::pair<std::string, bool>> kTank   = bundle(cardian::party::Role::Tank, xi::Job::WAR);
     const std::vector<std::pair<std::string, bool>> kDamage = bundle(cardian::party::Role::Damage, xi::Job::WAR);
 } // namespace
@@ -417,18 +427,18 @@ TEST_CASE("gambit layers: Healer's bundle onto a default mage adds nothing: the 
 {
     uint32 next = 0;
     auto   own  = ownRows(pawn::defaultRowsFor(xi::Job::WHM));
-    auto   lent = lentRows(kHealer, next);
+    auto   lent = lentRows(bundle(cardian::party::Role::Healer, xi::Job::WHM), next);
 
-    // the bundle's four stand in the places of her Cure (1), her -na (2),
-    // her Enfeeble (3) and her Rest (4), under her numbers; the rest of her
-    // list is untouched
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1*", "r2*", "r3*", "r4*", "5", "6", "7", "8", "9" });
+    // the bundle's five stand in the places of her Cure (1), her Regen (2),
+    // her -na (3), her Enfeeble (4) and her Rest (5), under her numbers; the
+    // rest of her list is untouched
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1*", "r2*", "r3*", "r4*", "r5*", "6", "7", "8", "9", "10" });
     const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
     CHECK(rows[1].row == &lent[1]);
     CHECK(rows[1].index == 2);
     CHECK(rows[1].origin == Origin::Both);
-    CHECK(rows[3].row == &lent[3]);
-    CHECK(rows[3].index == 4);
+    CHECK(rows[4].row == &lent[4]);
+    CHECK(rows[4].index == 5);
 }
 
 TEST_CASE("gambit layers: a lent row overlaps hers by action and side, whatever the condition or the mark", "[cardian][gambits][layers][fit]")
@@ -532,24 +542,25 @@ TEST_CASE("gambit layers: Tank's bundle onto a default Red Mage / Warrior keeps 
     // -- her own weapon skill row with the seat's tactician's standing in
     // it (#503) -- and her own marked Attack row last, off: "targeting
     // ally" is not the pull's finder, so the pull does not stand in it
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "1", "2", "3", "4", "r4*", "6", "7", "8", "9" });
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "1", "2", "3", "4", "5", "r4*", "7", "8", "9", "10" });
     const auto states = fittedStates(own, lent);
-    REQUIRE(states.size() == 12);
+    REQUIRE(states.size() == 13);
     CHECK(states[0] == State::Tool);  // the pull: the tank's melee
     CHECK(states[1] == State::Tool);  // Provoke
     CHECK(states[2] == State::Tool);  // Defender
     CHECK(states[3] == State::Tool);  // Cure (best)
-    CHECK(states[4] == State::Tool);  // -na (best)
-    CHECK(states[5] == State::Tool);  // Enfeeble
-    CHECK(states[6] == State::Tool);  // Rest
-    CHECK(states[7] == State::Tool);  // her weapon skill, the seat's tactician's in its place
-    CHECK(states[8] == State::Order); // Rest with the player
-    CHECK(states[9] == State::Order); // Eat with the player
-    CHECK(states[10] == State::Order); // Avoid aggro
-    CHECK(states[11] == State::Tool); // her own marked Attack row
+    CHECK(states[4] == State::Tool);  // Regen (best)
+    CHECK(states[5] == State::Tool);  // -na (best)
+    CHECK(states[6] == State::Tool);  // Enfeeble
+    CHECK(states[7] == State::Tool);  // Rest
+    CHECK(states[8] == State::Tool);  // her weapon skill, the seat's tactician's in its place
+    CHECK(states[9] == State::Order); // Rest with the player
+    CHECK(states[10] == State::Order); // Eat with the player
+    CHECK(states[11] == State::Order); // Avoid aggro
+    CHECK(states[12] == State::Tool); // her own marked Attack row
     const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
-    CHECK_FALSE(rows[11].on);
-    CHECK(rows[11].origin == Origin::Own);
+    CHECK_FALSE(rows[12].on);
+    CHECK(rows[12].origin == Origin::Own);
 }
 
 TEST_CASE("gambit layers: an Attack row is its finder: a lent pull takes the same finder's row and leaves her other Attack rows standing", "[cardian][gambits][layers][fit]")
@@ -841,18 +852,20 @@ TEST_CASE("gambit layers: a seat lends the tools her two jobs can ever use, the 
     // enfeebles a pair that learns Cure and a priced debuff, from either job
     CHECK(bundle(Role::Healer, xi::Job::WAR).empty());
     CHECK(bundle(Role::Healer, xi::Job::WAR, xi::Job::MNK).empty());
-    CHECK(specs(bundle(Role::Healer, xi::Job::WAR, xi::Job::WHM)) == std::vector<std::string>{ mage[0].first, mage[1].first, mage[2].first, mage[3].first });
+    // mage: Cure, Regen, -na, Enfeeble, Rest; a job that learns Regen
+    // (White and Red Mage) is lent it after her Cure
+    CHECK(specs(bundle(Role::Healer, xi::Job::WAR, xi::Job::WHM)) == std::vector<std::string>{ mage[0].first, mage[1].first, mage[2].first, mage[3].first, mage[4].first });
     // a Red Mage healer bursts the window too, through her tactician's nukes
     // -- bursts alone from the Healer seat -- after her cures (burstsAsHealer)
     const std::string burst = "2|101:0|2:3:0|0";
-    CHECK(specs(bundle(Role::Healer, xi::Job::RDM)) == std::vector<std::string>{ mage[0].first, burst, mage[2].first, mage[3].first });
-    CHECK(specs(bundle(Role::Healer, xi::Job::PLD)) == std::vector<std::string>{ mage[0].first, mage[3].first });
-    CHECK(specs(bundle(Role::Healer, xi::Job::PLD, xi::Job::BLM)) == std::vector<std::string>{ mage[0].first, mage[2].first, mage[3].first });
-    CHECK(specs(bundle(Role::Healer, xi::Job::RDM, xi::Job::WHM)) == std::vector<std::string>{ mage[0].first, mage[1].first, burst, mage[2].first, mage[3].first });
+    CHECK(specs(bundle(Role::Healer, xi::Job::RDM)) == std::vector<std::string>{ mage[0].first, mage[1].first, burst, mage[3].first, mage[4].first });
+    CHECK(specs(bundle(Role::Healer, xi::Job::PLD)) == std::vector<std::string>{ mage[0].first, mage[4].first });
+    CHECK(specs(bundle(Role::Healer, xi::Job::PLD, xi::Job::BLM)) == std::vector<std::string>{ mage[0].first, mage[3].first, mage[4].first });
+    CHECK(specs(bundle(Role::Healer, xi::Job::RDM, xi::Job::WHM)) == std::vector<std::string>{ mage[0].first, mage[1].first, mage[2].first, burst, mage[3].first, mage[4].first });
     // a Summoner heals through her sub job alone: a White Mage's gives her
     // the seat's every row; a Black Mage's enfeebles are no healer's, and
     // she is lent nothing
-    CHECK(specs(bundle(Role::Healer, xi::Job::SMN, xi::Job::WHM)) == std::vector<std::string>{ mage[0].first, mage[1].first, mage[2].first, mage[3].first });
+    CHECK(specs(bundle(Role::Healer, xi::Job::SMN, xi::Job::WHM)) == std::vector<std::string>{ mage[0].first, mage[1].first, mage[2].first, mage[3].first, mage[4].first });
     CHECK(bundle(Role::Healer, xi::Job::SMN, xi::Job::BLM).empty());
     CHECK(bundle(Role::Healer, xi::Job::WAR, xi::Job::BLM).empty());
 }
@@ -886,17 +899,21 @@ TEST_CASE("gambit layers: a bundle's rows are rows the editor could make, and He
             CHECK(enabled);
         }
     }
-    // Healer lends the mage defaults' marked Cure, -na, Enfeeble and Rest,
-    // in that order
-    const auto& mage = pawn::defaultRowsFor(xi::Job::WHM);
-    REQUIRE(kHealer.size() == 4);
-    CHECK(kHealer[0].first == mage[0].first);
-    CHECK(kHealer[1].first == mage[1].first);
-    CHECK(kHealer[2].first == mage[2].first);
-    CHECK(kHealer[3].first == mage[3].first);
-    CHECK(cardian::tactician::allowanceOf(*pawn::text::parseRow(kHealer[2].first)) == cardian::tactician::Allowance::Debuff);
-    CHECK(cardian::tactician::allowanceOf(*pawn::text::parseRow(kHealer[3].first)) == cardian::tactician::Allowance::Rest);
-    CHECK(bundle(cardian::party::Role::Healer, xi::Job::WHM) == kHealer);
+    // Healer lends the mage defaults' marked Cure, Regen, -na, Enfeeble and
+    // Rest, in that order
+    const auto& mage   = pawn::defaultRowsFor(xi::Job::WHM);
+    const auto  healer = bundle(cardian::party::Role::Healer, xi::Job::WAR, xi::Job::WHM);
+    REQUIRE(healer.size() == 5);
+    for (std::size_t i = 0; i < healer.size(); ++i)
+    {
+        CHECK(healer[i].first == mage[i].first);
+    }
+    CHECK(cardian::tactician::allowanceOf(*pawn::text::parseRow(healer[1].first)) == cardian::tactician::Allowance::Regen);
+    CHECK(cardian::tactician::allowanceOf(*pawn::text::parseRow(healer[3].first)) == cardian::tactician::Allowance::Debuff);
+    CHECK(cardian::tactician::allowanceOf(*pawn::text::parseRow(healer[4].first)) == cardian::tactician::Allowance::Rest);
+    CHECK(bundle(cardian::party::Role::Healer, xi::Job::WHM) == healer);
+    // the fit cases' Healer is the seat's own, Regen aside
+    CHECK(kHealer == std::vector<std::pair<std::string, bool>>{ healer[0], healer[2], healer[3], healer[4] });
     // Damage lends a melee job the melee defaults' trio, a Warrior her own
     // marked Berserk and Aggressor, and the melee defaults' tactician's
     // weapon skill (ROADMAP slice 3h)

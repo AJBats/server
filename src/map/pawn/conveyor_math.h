@@ -35,6 +35,7 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <cmath>
 #include <compare>
 #include <cstddef>
 #include <span>
@@ -98,6 +99,8 @@ namespace cardian::tactics
         double      fedAt  = 0.0;
         double      score  = 0.0; // the role's order among its own, lower first: a cure's HP margin, a debuff's cost less its worth
         double      landChance = 1.0; // the feeder's own chance to land it
+        int32       buffer = 0;   // a role cure's: the gap past Regens and cures in flight it waits for (cureBuffer)
+        int32       coming = 0;   // a role cure's: what its healer's own Regen, proposed for the member, will heal
         std::string why;          // "48 missing", "worth 12 MP against 6"
 
         // The same voice: a re-feed replaces it
@@ -398,6 +401,19 @@ namespace cardian::tactics
     inline auto cureWanted(const int32 missing, const int32 tierHeals) -> bool
     {
         return tierHeals > 0 && missing >= tierHeals;
+    }
+
+    // The share of a member's HP a routine cure leaves missing in a fight
+    // (the user, 2026-10-28): chip damage is the Regen's, and a top-up waits
+    // until she is down a quarter past what her Regen and the cures in
+    // flight will heal. First aid is apart and never waits for it
+    inline constexpr double kCureBuffer = 0.25;
+
+    // The gap a routine cure on her waits for: the buffer in a fight,
+    // nothing between fights, when the healers top the party up
+    inline auto cureBuffer(const int32 maxHp, const bool fightOn) -> int32
+    {
+        return fightOn ? static_cast<int32>(std::ceil(kCureBuffer * maxHp)) : 0;
     }
 
     // A mage's pace at a spot, one cycle per stretch of fighting, from the

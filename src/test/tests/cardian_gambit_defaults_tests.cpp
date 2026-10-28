@@ -105,6 +105,7 @@ namespace
 
     const Rows kMage{
         { "1|101:0|2:0:1|0", true },
+        { "1|101:0|2:0:28|0", true },
         { "1|101:0|2:0:4|0", true },
         { "2|101:0|2:100:0|0", true },
         { "0|101:0|100:14:1|0", true },
@@ -305,33 +306,37 @@ TEST_CASE("gambit defaults: the mage set is the tactician's cures, ailments, enf
     // Checking the Attack row is what makes her a melee mage, so it ships
     // off; marked, so checked it is her tactician's melee, which leaves a
     // fight to rest (RESEARCH §14.12 decisions 19 and 20)
-    for (std::size_t i = 0; i < 8; ++i)
+    for (std::size_t i = 0; i < 9; ++i)
     {
         INFO("row " << i);
         CHECK(rows[i].second);
     }
-    CHECK_FALSE(rows[8].second);
-    CHECK(cardian::tactician::isMarked(*parseRow(rows[8].first)));
+    CHECK_FALSE(rows[9].second);
+    CHECK(cardian::tactician::isMarked(*parseRow(rows[9].first)));
 
     requireRow(rows[0].first, { G_TARGET::PARTY, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(G_SELECT::HIGHEST), static_cast<uint32>(SPELLFAMILY_CURE) });
-    requireRow(rows[1].first, { G_TARGET::PARTY, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(G_SELECT::HIGHEST), static_cast<uint32>(SPELLFAMILY_NA) });
-    requireRow(rows[2].first, { G_TARGET::TARGET, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(pawn::G_SELECT_ENFEEBLE), 0 });
-    requireRow(rows[3].first, { G_TARGET::SELF, pawn::G_CONDITION_TACTICIANS_CHOICE, kBehavior, static_cast<uint16>(pawn::Behavior::Rest), 1 });
-    requireRow(rows[4].first, { G_TARGET::TARGET, G_CONDITION::HPP_GTE, G_REACTION::WS, static_cast<uint16>(G_SELECT::HIGHEST), 0, 50 });
-    requireRow(rows[5].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRest, 1 });
-    requireRow(rows[6].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kEat, 1 });
-    requireRow(rows[7].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kAvoid, 1 });
-    requireRow(rows[8].first, { pawn::G_TARGET_TARGETING_ALLY, pawn::G_CONDITION_TACTICIANS_CHOICE, kAttack, 0, 0 });
+    requireRow(rows[1].first, { G_TARGET::PARTY, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(G_SELECT::HIGHEST), static_cast<uint32>(SPELLFAMILY_REGEN) });
+    requireRow(rows[2].first, { G_TARGET::PARTY, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(G_SELECT::HIGHEST), static_cast<uint32>(SPELLFAMILY_NA) });
+    requireRow(rows[3].first, { G_TARGET::TARGET, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(pawn::G_SELECT_ENFEEBLE), 0 });
+    requireRow(rows[4].first, { G_TARGET::SELF, pawn::G_CONDITION_TACTICIANS_CHOICE, kBehavior, static_cast<uint16>(pawn::Behavior::Rest), 1 });
+    requireRow(rows[5].first, { G_TARGET::TARGET, G_CONDITION::HPP_GTE, G_REACTION::WS, static_cast<uint16>(G_SELECT::HIGHEST), 0, 50 });
+    requireRow(rows[6].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRest, 1 });
+    requireRow(rows[7].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kEat, 1 });
+    requireRow(rows[8].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kAvoid, 1 });
+    requireRow(rows[9].first, { pawn::G_TARGET_TARGETING_ALLY, pawn::G_CONDITION_TACTICIANS_CHOICE, kAttack, 0, 0 });
 }
 
 TEST_CASE("gambit defaults: the Black Mage's set is the mage set with her tactician's nukes after the enfeebles", "[cardian][gambits][defaults]")
 {
     const auto& rows = defaultRowsFor(xi::Job::BLM);
     REQUIRE(rows == kBlackMage);
-    // the mage set, row for row, with the marked Damage spell (any) row slotted in after Enfeeble
+    // the mage set, row for row but its Regen (a Black Mage learns none),
+    // with the marked Damage spell (any) row slotted in after Enfeeble
     Rows withoutNuke = rows;
     withoutNuke.erase(withoutNuke.begin() + 3);
-    CHECK(withoutNuke == kMage);
+    Rows withoutRegen = kMage;
+    withoutRegen.erase(withoutRegen.begin() + 1);
+    CHECK(withoutNuke == withoutRegen);
     requireRow(rows[3].first, { G_TARGET::TARGET, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(G_SELECT::RANDOM), 0 });
     const auto nuke = *parseRow(rows[3].first);
     CHECK(cardian::tactician::stateOf(nuke) == cardian::tactician::State::Tool);

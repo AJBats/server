@@ -26,18 +26,21 @@
 #include "party_roster.h"
 #include "pawn.h"
 #include "pawn_spellbook.h"
+#include "regen_math.h"
 #include "spell_bank.h"
 #include "tactician_line.h"
 #include "tactics.h"
 
 #include "common/logging.h"
 #include "common/settings.h"
+#include "common/timer.h"
 
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
 #include "ipc_client.h"
 #include "party.h"
 #include "spell.h"
+#include "status_effect.h"
 #include "status_effect_container.h"
 #include "utils/zoneutils.h"
 
@@ -119,6 +122,16 @@ namespace pawn::tactics::role
 
     namespace
     {
+        auto regenOn(const CBattleEntity* PMember) -> CStatusEffect*
+        {
+            return PMember != nullptr && PMember->StatusEffectContainer != nullptr ? PMember->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Regen) : nullptr;
+        }
+
+        auto secondsOf(const timer::duration d) -> double
+        {
+            return std::chrono::duration<double>(d).count();
+        }
+
         auto curable(const CCharEntity* PHolder, CBattleEntity* PMember) -> bool
         {
             return PMember != nullptr && PMember->objtype == TYPE_PC && !PMember->isDead() && PMember->loc.zone == PHolder->loc.zone;
@@ -194,6 +207,17 @@ namespace pawn::tactics::role
         }
     } // namespace
 
+    auto regenLeft(const CBattleEntity* PMember) -> int32
+    {
+        const auto* PEffect = regenOn(PMember);
+        if (PEffect == nullptr)
+        {
+            return 0;
+        }
+        const double left = secondsOf(PEffect->GetDuration()) - secondsOf(timer::now() - PEffect->GetStartTime());
+        return static_cast<int32>(cardian::regen::healsLeft(PEffect->GetPower(), left));
+    }
+
     void sayParty(CCharEntity* PChar, const std::string& text)
     {
         // A played character's party chat is his own: the tactician never
@@ -230,16 +254,95 @@ namespace pawn::tactics::role
         // moment: a need she cannot serve is still a need another mage can.
         // Which tier she casts is the conveyor's (pickWhole)
         // A Black Mage cures as routine only from the Healer seat (the user,
-        // 2026-10-17): seated anywhere else she joins the cures for first aid
-        // alone, which the party's tick chooses apart (chooseFirstAid). With
-        // no seat taken she cures as any mage does
+        // 2026-10-17), and any mage in the Damage seat cures as a Black Mage
+        // does (the user, 2026-10-27: a Red Mage dealing damage leaves the
+        // top-ups to the healers): she joins the cures for first aid alone,
+        // which the party's tick chooses apart (chooseFirstAid). With no seat
+        // taken she cures as any mage does
         const auto seat         = pawn::roster::roleOf(PHolder);
-        const bool routineCures = PHolder->GetMJob() != xi::Job::BLM || seat == cardian::party::Role::Healer || seat == cardian::party::Role::None;
+        const bool routineCures = seat == cardian::party::Role::Healer || seat == cardian::party::Role::None ||
+                                  (PHolder->GetMJob() != xi::Job::BLM && seat != cardian::party::Role::Damage);
         auto       tiers        = bank::cureTiers(PHolder, bank::CureAvailability::Eligible);
         if (!routineCures)
         {
             tiers.clear();
         }
+
+        // A fight on, routine cures keep a buffer (conveyor_math.h
+        // cureBuffer), and a Regen is judged on the time the fight has left
+        bool fightOn = false;
+        for (const auto& r : log.open())
+        {
+            fightOn = fightOn || !r.settling();
+        }
+        const double fightLeft = fightOn ? std::max(0.0, pawn::tactics::fightLeft(PHolder)) : 0.0;
+
+        // Her Regen, the top-up she prefers once she has one (regen_math.h;
+        // the user, 2026-10-27): the strongest tier she can cast now, put on
+        // the one member whose missing HP and the damage expected before the
+        // fight ends spend its whole -- the one taking the most, the tank as
+        // a rule. What it heals is its own script run as her cast
+        // (bank::expectedRegen). That member's routine cure waits past it
+        std::optional<uint32>                  regenFor;
+        double                                 regenWhole = 0.0;
+        uint16                                 regen      = 0;
+        std::vector<cardian::regen::Candidate> candidates;
+        std::vector<cardian::regen::Seen>      seens;
+        std::vector<std::string>               rows;
+        std::vector<uint16>                    regenTiers;
+        if (routineCures)
+        {
+            for (auto* PMember : scope.members)
+            {
+                if (!curable(PHolder, PMember) || regenOn(PMember) != nullptr)
+                {
+                    continue;
+                }
+                const double missing = PMember->GetMaxHP() - PMember->health.hp;
+                const double rate    = threat(log, PMember, now).takenPerSecond;
+                if (missing <= 0.0 && rate <= 0.0)
+                {
+                    continue; // nothing for any Regen to heal
+                }
+                // the strongest tier she can cast that her row admits on her
+                for (auto it = cardian::tactician::kRegenTiers.rbegin(); it != cardian::tactician::kRegenTiers.rend(); ++it)
+                {
+                    const auto tier = static_cast<SpellID>(*it);
+                    const auto by   = bank::usable(PHolder, tier) ? admittedBy(PHolder, tier, PMember) : std::nullopt;
+                    if (!by.has_value())
+                    {
+                        continue;
+                    }
+                    const auto heals = bank::expectedRegen(PHolder, spell::GetSpell(tier), PMember);
+                    if (heals.has_value() && cardian::regen::worthCasting({ heals->first, heals->second }, missing, rate, fightLeft))
+                    {
+                        candidates.push_back({ PMember->id, rate, missing });
+                        seens.push_back({ heals->first, heals->second });
+                        rows.push_back(*by);
+                        regenTiers.push_back(*it);
+                    }
+                    break;
+                }
+            }
+            if (const auto best = cardian::regen::pick(candidates); best.has_value())
+            {
+                const auto& c = candidates[*best];
+                regen         = regenTiers[*best];
+                regenFor      = c.id;
+                regenWhole    = cardian::regen::healsWhole(seens[*best]);
+                conveyor.feed(Conveyor::keyFor(spell::GetSpell(static_cast<SpellID>(regen)), c.id, PHolder->id),
+                              Request{ .source = Source::Role,
+                                       .caster = PHolder->id,
+                                       .rowId  = rows[*best],
+                                       .spell  = regen,
+                                       .fedAt  = now,
+                                       .score  = -c.takenPerSecond,
+                                       .why    = fmt::format("regen: taking {:.1f}/s, {:.0f} missing, the fight {:.0f} s from its end, it heals {:.0f} a tick over {:.0f} s, {:.0f} in all",
+                                                             c.takenPerSecond, c.missing, fightLeft, seens[*best].power, seens[*best].seconds, regenWhole) },
+                              scope);
+            }
+        }
+
         for (auto* PMember : scope.members)
         {
             if (!curable(PHolder, PMember))
@@ -262,13 +365,29 @@ namespace pawn::tactics::role
                 const int32 whole = cardian::tactics::wholeAt(tier.option);
                 line              = line == 0 ? whole : std::min(line, whole);
             }
+            // A Regen on her heals the first of it, and so does her
+            // healer's own Regen proposed for her; in a fight the rest waits
+            // until it reaches the buffer
             const int32 missing = PMember->GetMaxHP() - PMember->health.hp;
-            if (line == 0 || !cardian::tactics::cureWanted(missing, line))
+            int32       gap     = cardian::regen::gapAfter(missing, regenLeft(PMember));
+            if (regenFor == PMember->id)
+            {
+                gap = cardian::regen::gapAfter(gap, regenWhole);
+            }
+            const int32 buffer = cardian::tactics::cureBuffer(PMember->GetMaxHP(), fightOn);
+            if (line == 0 || !cardian::tactics::cureWanted(gap, line) || gap < buffer)
             {
                 continue;
             }
             conveyor.feed({ NeedKind::Cure, 0, PMember->id },
-                          Request{ .source = Source::Role, .caster = PHolder->id, .rowId = row, .fedAt = now, .score = -static_cast<double>(missing), .why = fmt::format("{} missing", missing) },
+                          Request{ .source = Source::Role,
+                                   .caster = PHolder->id,
+                                   .rowId  = row,
+                                   .fedAt  = now,
+                                   .score  = -static_cast<double>(gap),
+                                   .buffer = buffer,
+                                   .coming = regenFor == PMember->id ? static_cast<int32>(regenWhole) : 0,
+                                   .why    = gap == missing ? fmt::format("{} missing", missing) : fmt::format("{} missing, {} past her Regen", missing, gap) },
                           scope);
         }
 

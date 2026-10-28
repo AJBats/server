@@ -1809,3 +1809,49 @@ xi.cardian.bank.debuffSubPower = function(scriptName, effectId)
 
     return recorded
 end
+
+-- What a Regen tier would put on a member: its own script run with the real
+-- caster, whose gear, merits and job points the enhancing chain reads, on a
+-- stand-in of the target that answers as the target does and keeps nothing.
+-- The power each tick heals and the duration in seconds, or nil
+xi.cardian.bank.expectedRegen = function(caster, target, s)
+    local script = spellScriptOf(s.name)
+    if script == nil then
+        return nil
+    end
+
+    local power    = nil
+    local duration = nil
+    local standIn  = setmetatable({
+        addStatusEffect = function(_, effect, params)
+            if effect == xi.effect.REGEN and type(params) == 'table' then
+                power    = params.power
+                duration = params.duration
+            end
+
+            return true
+        end,
+
+        delStatusEffect       = function() return true end,
+        delStatusEffectSilent = function() return true end,
+    }, {
+        __index = function(self, method)
+            local call = function(_, ...)
+                return target[method](target, ...)
+            end
+            rawset(self, method, call)
+            return call
+        end,
+    })
+
+    local ok, err = pcall(script.onSpellCast, caster, standIn, spellStage(s, target))
+    if not ok then
+        error(err)
+    end
+
+    if type(power) ~= 'number' or type(duration) ~= 'number' then
+        return nil
+    end
+
+    return power, duration
+end

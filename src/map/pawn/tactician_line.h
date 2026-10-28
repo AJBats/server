@@ -61,6 +61,8 @@ namespace cardian::tactician
     };
     inline constexpr uint32                kCureFamily = 1; // SPELLFAMILY_CURE
     inline constexpr std::array<uint16, 6> kCureTiers{ 1, 2, 3, 4, 5, 6 }; // Cure to Cure VI
+    inline constexpr uint32                kRegenFamily = 28; // SPELLFAMILY_REGEN
+    inline constexpr std::array<uint16, 5> kRegenTiers{ 108, 110, 111, 477, 504 }; // Regen to Regen V, by the effect's tier
     inline constexpr std::array<Spell, 14> kPricedDebuffs{ {
         { 58, 14 },  // Paralyze
         { 56, 12 },  // Slow
@@ -81,6 +83,11 @@ namespace cardian::tactician
     constexpr auto isCureTier(const uint32 spell) -> bool
     {
         return std::ranges::find(kCureTiers, spell) != kCureTiers.end();
+    }
+
+    constexpr auto isRegenTier(const uint32 spell) -> bool
+    {
+        return std::ranges::find(kRegenTiers, spell) != kRegenTiers.end();
     }
 
     // The family of a debuff the bank prices; none for any other spell
@@ -315,9 +322,10 @@ namespace cardian::tactician
     // Berserk, Defender, Aggressor, Focus, Dodge), Boost before her weapon
     // skill (Self), Sneak Attack before it from the mob's back (Self), a
     // damage spell on a Foe row's foe (Damage spell (any): the Black Mage's
-    // nukes and her bursts), or her best weapon skill on a Foe row's foe
-    // (Weapon skill (best): the skillchains, skillchain_math.h wsCall). None:
-    // a mark with no judgement behind it
+    // nukes and her bursts), her best weapon skill on a Foe row's foe
+    // (Weapon skill (best): the skillchains, skillchain_math.h wsCall), or a
+    // Regen for someone on the party's side (her top-up of choice, the user,
+    // 2026-10-27; role_support.cpp). None: a mark with no judgement behind it
     enum class Allowance : uint8
     {
         None,
@@ -332,6 +340,7 @@ namespace cardian::tactician
         Nuke,
         SneakAttack,
         WeaponSkill,
+        Regen,
     };
 
     // The tools her tactician casts in the party's fights: cures, priced
@@ -341,7 +350,8 @@ namespace cardian::tactician
     // (CGambits::CastNuke)
     constexpr auto isSpellTool(const Allowance allowance) -> bool
     {
-        return allowance == Allowance::Cures || allowance == Allowance::Debuff || allowance == Allowance::Ailments || allowance == Allowance::Nuke;
+        return allowance == Allowance::Cures || allowance == Allowance::Debuff || allowance == Allowance::Ailments || allowance == Allowance::Nuke ||
+               allowance == Allowance::Regen;
     }
 
     // An action that takes ailments off: -na (best), a -na or Erase
@@ -406,6 +416,11 @@ namespace cardian::tactician
         if (cure)
         {
             return curesTarget(g.target_selector) ? Allowance::Cures : Allowance::None;
+        }
+        const bool regen = (a.select == G_SELECT::HIGHEST && a.select_arg == kRegenFamily) || (a.select == G_SELECT::SPECIFIC && isRegenTier(a.select_arg));
+        if (regen)
+        {
+            return curesTarget(g.target_selector) ? Allowance::Regen : Allowance::None;
         }
         const bool debuff = (a.select == G_SELECT::SPECIFIC && pricedFamilyOf(a.select_arg).has_value()) ||
                             (a.select == G_SELECT::HIGHEST && isPricedFamily(a.select_arg)) || a.select == pawn::G_SELECT_ENFEEBLE;
@@ -476,12 +491,13 @@ namespace cardian::tactician
     }
 
     // Whether a marked row lets her tactician cast this spell: Cure (best)
-    // any tier, a tier itself, a priced debuff by its id or by its family,
-    // and Enfeeble the single-target priced debuffs
+    // any tier, a tier itself, Regen (best) any tier of Regen, a priced
+    // debuff by its id or by its family, and Enfeeble the single-target
+    // priced debuffs
     inline auto allowsSpell(const gambits::Gambit_t& g, const uint32 spell) -> bool
     {
         const auto kind = allowanceOf(g);
-        if (!isMarked(g) || (kind != Allowance::Cures && kind != Allowance::Debuff))
+        if (!isMarked(g) || (kind != Allowance::Cures && kind != Allowance::Debuff && kind != Allowance::Regen))
         {
             return false;
         }
@@ -493,6 +509,10 @@ namespace cardian::tactician
         if (kind == Allowance::Cures)
         {
             return isCureTier(spell);
+        }
+        if (kind == Allowance::Regen)
+        {
+            return isRegenTier(spell);
         }
         if (a.select == pawn::G_SELECT_ENFEEBLE)
         {

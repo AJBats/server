@@ -604,6 +604,42 @@ describe('Cardian tactics bank', function()
         assert(war:getTP() == 2000, string.format('her TP is untouched: %d', war:getTP()))
     end)
 
+    -- The Regen read runs Regen's own script with the real caster, so her
+    -- gear's bonus counts; it must match what a cast puts on the target
+    it('expectedRegen matches a cast, the caster\'s Regen bonus counted', function()
+        -- on herself: Regen goes on her party alone, and a test player has none
+        local caster = xi.test.world:spawnPlayer({ job = xi.job.WHM, level = 30 })
+        local target = caster
+
+        caster:addMod(xi.mod.REGEN_MULTIPLIER, 50)
+        caster:addSpell(xi.magic.spell.REGEN)
+        caster:setMP(caster:getMaxMP())
+        caster:resetRecasts()
+
+        local s =
+        {
+            id         = xi.magic.spell.REGEN,
+            name       = 'regen',
+            element    = xi.element.LIGHT,
+            skillType  = xi.skill.ENHANCING_MAGIC,
+            spellGroup = xi.magic.spellGroup.WHITE,
+            family     = 0,
+        }
+        local power, duration = xi.cardian.bank.expectedRegen(caster, target, s)
+        assert(type(power) == 'number' and type(duration) == 'number', string.format('Regen should read: %s, %s', tostring(power), tostring(duration)))
+        assert(power > 5, string.format('the bonus should raise Regen past its base of 5: %d', power))
+        assert(not target:hasStatusEffect(xi.effect.REGEN), 'the read puts nothing on her')
+
+        caster.actions:useSpell(target, xi.magic.spell.REGEN)
+        xi.test.world:tickEntity(caster)
+        xi.test.world:skipTime(10)
+
+        local effect = target:getStatusEffect(xi.effect.REGEN)
+        assert(effect ~= nil, 'the cast lands a Regen')
+        assert(effect:getPower() == power, string.format('the cast heals %d a tick, the read said %d', effect:getPower(), power))
+        assert(effect:getDuration() == duration * 1000, string.format('the cast lasts %d ms, the read said %d s', effect:getDuration(), duration))
+    end)
+
     it('debuffSubPower reads what Dia and Bio scripts put on a mob, overrides included', function()
         local bank = xi.cardian.bank
         assert(bank.debuffSubPower('dia', xi.effect.DIA) == 10, 'Dia lowers defence 10% in upstream\'s script')
