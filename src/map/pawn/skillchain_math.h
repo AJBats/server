@@ -1381,4 +1381,68 @@ namespace cardian::chains
         }
         return freeCall(fmt::format("her free pick and what she can burst after are worth more than saving for {}", chainName(v.chain)));
     }
+
+    // The burst a routine assignment of hers would cost her
+    // (CGambits::CastAssignment): a spell that keeps her `seconds` -- its
+    // cast and the wait after it -- and spends `mp`, weighed as nukeCall
+    // weighs her free pick, with nothing of its own in the balance, her
+    // action over only once the tick's check has come round
+    // (kBurstCheckEvery). Only a burst her nuke call plans counts -- one cast
+    // now, or one whose cast it times (NukeCall::burstIn): a burst it would
+    // not cast, her free pick `free` dealing more a second, is nothing to
+    // wait for.
+    //  - A window open: her best burst in it, which the spell leaves her a
+    //    lesser one or none.
+    //  - A chain on its way that the mob lives to see: the burst timed for
+    //    it, which the spell pushes off its moment or leaves her a lesser
+    //    one or none.
+    // None when it costs her nothing
+    inline auto burstCost(const std::vector<Nuke>& nukes, const Nuke* free, const BurstView& v, const double seconds, const int32 mp) -> std::optional<PlannedBurst>
+    {
+        if (const auto call = nukeCall(nukes, free, v); call.move != NukeMove::Burst && !call.burstIn.has_value())
+        {
+            return std::nullopt;
+        }
+        const auto   asIs    = [](const Nuke& n) { return n.readyIn; };
+        const auto   mpNow   = [&v](const double at) { return v.mpAt(v.mp, at); };
+        const auto   mpAfter = [&v, mp](const double at) { return v.mpAt(v.mp - mp, at); };
+        const double freeAt  = seconds + kBurstCheckEvery;
+        if (v.open.has_value())
+        {
+            const auto now = bestBurst(nukes, v.elements, mpNow, 0.0, 0.0, 0.0, *v.open, asIs);
+            if (now.nuke == nullptr)
+            {
+                return std::nullopt;
+            }
+            const auto after = bestBurst(nukes, v.elements, mpAfter, freeAt, 0.0, 0.0, *v.open, asIs);
+            if (after.nuke != nullptr && after.nuke->burst >= now.nuke->burst)
+            {
+                return std::nullopt;
+            }
+            return now;
+        }
+        if (!v.chainIn.has_value())
+        {
+            return std::nullopt;
+        }
+        const double t = *v.chainIn;
+        if (v.mobLives >= 0.0 && v.mobLives < t)
+        {
+            return std::nullopt;
+        }
+        const double aim   = burstMoment(t, v.windowLasts);
+        const double until = t + v.windowLasts;
+        const auto   b     = bestBurst(nukes, v.elements, mpNow, 0.0, t, aim, until, asIs);
+        if (b.nuke == nullptr)
+        {
+            return std::nullopt;
+        }
+        const auto after  = bestBurst(nukes, v.elements, mpAfter, freeAt, t, aim, until, asIs);
+        const bool onTime = after.nuke != nullptr && after.start <= castStartFor(aim, after.nuke->cast) + kBurstCheckEvery;
+        if (onTime && after.nuke->burst >= b.nuke->burst)
+        {
+            return std::nullopt;
+        }
+        return b;
+    }
 } // namespace cardian::chains

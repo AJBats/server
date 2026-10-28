@@ -948,13 +948,53 @@ namespace pawn
         // First aid never waits; a routine assignment gives way to a burst
         // due now, cast here -- one the server refuses leaves her the
         // assignment, so she never does neither (the review, 2026-10-17)
-        if (a.has_value() && !a->emergency && BurstAhead(cardian::tactician::isCureTier(static_cast<uint32>(a->spell))))
+        // A Regen is a top-up as a cure is: the routine cure waits on it
+        const auto healing = [](const SpellID spell)
         {
+            return cardian::tactician::isCureTier(static_cast<uint32>(spell)) || cardian::tactician::isRegenTier(static_cast<uint32>(spell));
+        };
+        bool burstTried = false;
+        if (a.has_value() && !a->emergency && BurstAhead(healing(a->spell)))
+        {
+            burstTried     = true;
             m_lastBurstTry = timer::now();
             if (const auto at = ToolRow(cardian::tactician::Allowance::Nuke); at.has_value() && at->target == FightTarget() && CastNuke(at->target, engaged, at->index, true))
             {
                 return true;
             }
+        }
+        // ... and, in the fight, waits for a burst it would cost her, its
+        // cast and the wait after it leaving her none as good or pushing the
+        // one timed for a chain off its moment (skillchain_math.h burstCost):
+        // she stays free, the burst's own check casts it, and the assignment
+        // goes after. A cure waits only while nobody is at risk until the
+        // burst is cast. A burst tried here and not cast leaves her the
+        // assignment, as above
+        if (a.has_value() && !a->emergency && engaged && !burstTried)
+        {
+            if (const auto cost = BurstCostOf(a->spell); cost.has_value())
+            {
+                constexpr double kAfterBurst = 0.5;
+                const double     startIn     = std::max(0.0, std::chrono::duration<double>(cost->startAt - timer::now()).count());
+                const bool       cure        = healing(a->spell);
+                const auto       risk        = cure ? pawn::tactics::riskWithout(static_cast<CCharEntity*>(POwner), startIn + cost->cast + kAfterBurst) : std::nullopt;
+                if (!risk.has_value())
+                {
+                    // the burst's own check comes back to it as its cast comes due (BurstNow)
+                    m_burstAt = std::pair{ cost->mob, cost->startAt };
+                    // said once a hold, not again as its seconds count down
+                    auto*      PSpell = spell::GetSpell(a->spell);
+                    const auto line   = fmt::format("{} waits for her burst: {}", PSpell != nullptr ? PSpell->getName() : "?", cost->line);
+                    const auto key    = line.substr(0, line.find(" ~"));
+                    if (key != m_assignHoldSaid)
+                    {
+                        m_assignHoldSaid = key;
+                        ShowInfoFmt("tactics: {}'s {}", POwner->getName(), line);
+                    }
+                    return false;
+                }
+            }
+            m_assignHoldSaid.clear();
         }
         return a.has_value() && (CastAssigned(a->spell, a->target, a->why) || a->emergency);
     }
@@ -2237,6 +2277,12 @@ namespace pawn
         double                    burst = 0.0; // what the spell the call names deals as a burst
     };
 
+    struct CGambits::BurstInputs
+    {
+        std::vector<cardian::chains::Nuke> nukes;
+        cardian::chains::BurstView         view;
+    };
+
     auto CGambits::CastNuke(CBattleEntity* PTarget, const bool engaged, const std::size_t index, const bool burstOnly) -> bool
     {
         // Why her nukes hold, said as it changes, not every think: `why`
@@ -2453,6 +2499,25 @@ namespace pawn
     auto CGambits::WeighBurst(CBattleEntity* PTarget, const cardian::tactics::NukePricing& pricing, const std::vector<SpellID>& castable,
                               const cardian::tactics::NukePrice* pick, const pawn::chains::Forecast& chain) -> BurstWeighing
     {
+        const auto                   in   = BurstInputsOf(PTarget, pricing, castable, chain);
+        const cardian::chains::Nuke* free = nullptr;
+        if (pick != nullptr)
+        {
+            const auto it = std::ranges::find_if(in.nukes, [pick](const cardian::chains::Nuke& n) { return n.id == pick->id; });
+            free          = it != in.nukes.end() ? &*it : nullptr;
+        }
+        BurstWeighing out;
+        out.call = cardian::chains::nukeCall(in.nukes, free, in.view);
+        if (const auto it = std::ranges::find_if(in.nukes, [&out](const cardian::chains::Nuke& n) { return n.id == out.call.spell; }); it != in.nukes.end())
+        {
+            out.burst = it->burst;
+        }
+        return out;
+    }
+
+    auto CGambits::BurstInputsOf(CBattleEntity* PTarget, const cardian::tactics::NukePricing& pricing, const std::vector<SpellID>& castable,
+                                 const pawn::chains::Forecast& chain) -> BurstInputs
+    {
         std::vector<CSpell*> pricedSpells;
         for (const auto& p : pricing.prices)
         {
@@ -2488,12 +2553,6 @@ namespace pawn
             }
             nukes.push_back(n);
         }
-        const cardian::chains::Nuke* free = nullptr;
-        if (pick != nullptr)
-        {
-            const auto it = std::ranges::find_if(nukes, [pick](const cardian::chains::Nuke& n) { return n.id == pick->id; });
-            free          = it != nukes.end() ? &*it : nullptr;
-        }
         // What she regains a second while she waits for the chain: her
         // Refresh and the like, as the server's regeneration tick adds them
         const int32                refresh = std::max<int32>(POwner->getMod(xi::Mod::REFRESH), 0) - POwner->getMod(xi::Mod::REFRESH_DOWN);
@@ -2506,13 +2565,111 @@ namespace pawn
         view.open        = chain.open;
         view.chainIn     = chain.in;
         view.mobLives    = pricing.remaining;
-        BurstWeighing out;
-        out.call = cardian::chains::nukeCall(nukes, free, view);
-        if (const auto it = std::ranges::find_if(nukes, [&out](const cardian::chains::Nuke& n) { return n.id == out.call.spell; }); it != nukes.end())
+        return BurstInputs{ std::move(nukes), view };
+    }
+
+    auto CGambits::BurstCostOf(const SpellID spellId) -> std::optional<BurstCost>
+    {
+        // Asked every tick her assignment is read, and pricing her nukes for
+        // it: its answer stands as long as the burst's own check waits
+        // between asks (kBurstCheckEvery)
+        const auto now   = timer::now();
+        const auto every = std::chrono::duration_cast<timer::duration>(std::chrono::duration<double>(cardian::chains::kBurstCheckEvery));
+        if (m_costMemo.has_value() && m_costMemo->spell == spellId && now - m_costMemo->at < every)
         {
-            out.burst = it->burst;
+            return m_costMemo->cost;
         }
-        return out;
+        m_costMemo = CostMemo{ now, spellId, WeighCost(spellId) };
+        return m_costMemo->cost;
+    }
+
+    auto CGambits::WeighCost(const SpellID spellId) -> std::optional<BurstCost>
+    {
+        // Cheap first, as BurstNow asks: her tactician's nukes run on her
+        // mob, nothing would keep her from casting, and a chain is on it or
+        // on its way
+        auto* PMob   = FightTarget();
+        auto* PSpell = spell::GetSpell(spellId);
+        if (!Running() || !Offers().nukes || PMob == nullptr || PMob->isDead() || PMob->GetBattleTarget() == POwner || PSpell == nullptr)
+        {
+            return std::nullopt;
+        }
+        if (POwner->StatusEffectContainer->HasPreventActionEffect() || POwner->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::Silence, xi::StatusEffect::Mute }) ||
+            !pawn::tactics::has(POwner))
+        {
+            return std::nullopt;
+        }
+        const auto at = ToolRow(cardian::tactician::Allowance::Nuke);
+        if (!at.has_value() || at->target != PMob)
+        {
+            return std::nullopt;
+        }
+        const auto chain = pawn::chains::forecast(POwner, PMob);
+        if (!chain.has_value() || (!chain->open.has_value() && !chain->in.has_value()))
+        {
+            return std::nullopt;
+        }
+        // Every nuke she has learned, as CastNuke prices them with a chain in
+        // sight: a burst a few seconds off may be one on its recast now
+        const auto           spells = NukeSpells();
+        std::vector<SpellID> asked  = spells;
+        for (const auto id : OfferedNukes())
+        {
+            if (std::ranges::find(asked, id) == asked.end())
+            {
+                asked.push_back(id);
+            }
+        }
+        if (asked.empty())
+        {
+            return std::nullopt;
+        }
+        const auto pricing = pawn::tactics::nukePrices(POwner, PMob, asked);
+        if (!pricing.has_value() || pricing->prices.empty())
+        {
+            return std::nullopt;
+        }
+        // The spell's time as her nukes' is reckoned: its cast for her, and
+        // the wait after it (spell_bank.cpp secondsPerCast)
+        const double seconds = CastSeconds(PSpell) + std::max(2.5, std::chrono::duration<double>(PSpell->getAnimationTime()).count());
+        const int32  mp      = battleutils::CalculateSpellCost(POwner, PSpell);
+        const auto   in      = BurstInputsOf(PMob, *pricing, spells, *chain);
+        // Her free pick among those she can cast now (bank_math.h pickNuke),
+        // as CastNuke weighs it: a burst her nuke call would not cast is no
+        // burst to wait for
+        std::vector<cardian::tactics::NukePrice> castableNow;
+        std::ranges::copy_if(pricing->prices, std::back_inserter(castableNow), [&spells](const cardian::tactics::NukePrice& p)
+                             { return std::ranges::find(spells, static_cast<SpellID>(p.id)) != spells.end(); });
+        const auto*                  pick = cardian::tactics::pickNuke(castableNow);
+        const cardian::chains::Nuke* free = nullptr;
+        if (pick != nullptr)
+        {
+            const auto it = std::ranges::find_if(in.nukes, [pick](const cardian::chains::Nuke& n) { return n.id == pick->id; });
+            free          = it != in.nukes.end() ? &*it : nullptr;
+        }
+        const auto lost = cardian::chains::burstCost(in.nukes, free, in.view, seconds, mp);
+        if (!lost.has_value() || lost->nuke == nullptr)
+        {
+            return std::nullopt;
+        }
+        // A burst she could cast from where she stands, and with the MP a
+        // healer keeps
+        auto* PBurst = spell::GetSpell(static_cast<SpellID>(lost->nuke->id));
+        if (PBurst == nullptr || distance(POwner->loc.p, PMob->loc.p) > pawn::tactics::bank::castRange(POwner, PBurst, PMob) || !pawn::tactics::bank::inSight(POwner, PMob))
+        {
+            return std::nullopt;
+        }
+        if (const auto reserve = HealerReserve(); reserve.has_value() && static_cast<double>(POwner->health.mp - lost->nuke->mp) < *reserve)
+        {
+            return std::nullopt;
+        }
+        BurstCost cost;
+        cost.mob     = PMob->id;
+        cost.startAt = timer::now() + std::chrono::duration_cast<timer::duration>(std::chrono::duration<double>(std::max(0.0, lost->start)));
+        cost.cast    = lost->nuke->cast;
+        cost.line  = fmt::format("{} ~{:.0f} on {}, its cast in ~{:.1f} s; {} would keep her {:.1f} s", PBurst->getName(), lost->nuke->burst, PMob->getName(),
+                                 lost->start, PSpell->getName(), seconds);
+        return cost;
     }
 
     auto CGambits::BurstWorthStanding(const double after) -> std::optional<std::string>
@@ -4015,22 +4172,32 @@ namespace pawn
         {
             return 0;
         }
-        auto wsid = static_cast<uint16>(m_tpSkills.back().skill_id);
-        // Her best is hers to choose: with Sneak Attack able to go now, the
-        // best that takes it (RESEARCH §17.13 item 5); any other would spend
-        // it for nothing
-        if (!CPawnController::TakesSneakAttack(wsid) && m_host->SneakAttackNow(POwner->GetBattleTarget()))
+        // Her best is the one that deals the most on her mob, all of hers
+        // priced alike (skillchains.h wsWorth): the highest of hers is not it
+        // (a Red Mage's Flat Blade, a stun, over her Red Lotus Blade). With
+        // Sneak Attack able to go now, the best that takes it
+        // (RESEARCH §17.13 item 5): any other would spend it for nothing.
+        // Nothing priced, the highest of hers
+        auto*      PMob  = POwner->GetBattleTarget();
+        const bool sneak = m_host->SneakAttackNow(PMob) &&
+                           std::ranges::any_of(m_tpSkills, [](const TrustSkill_t& s) { return CPawnController::TakesSneakAttack(static_cast<uint16>(s.skill_id)); });
+        uint16 best  = 0;
+        double worth = 0.0;
+        for (const auto& s : m_tpSkills)
         {
-            for (auto it = m_tpSkills.rbegin(); it != m_tpSkills.rend(); ++it)
+            const auto id = static_cast<uint16>(s.skill_id);
+            if (sneak && !CPawnController::TakesSneakAttack(id))
             {
-                if (CPawnController::TakesSneakAttack(static_cast<uint16>(it->skill_id)))
-                {
-                    wsid = static_cast<uint16>(it->skill_id);
-                    break;
-                }
+                continue;
+            }
+            const double w = PMob != nullptr ? pawn::chains::wsWorth(static_cast<CCharEntity*>(POwner), id, PMob) : 0.0;
+            if (best == 0 || w >= worth)
+            {
+                best  = id;
+                worth = w;
             }
         }
-        return wsid;
+        return best;
     }
 
     auto CGambits::ToolRow(const cardian::tactician::Allowance kind) -> std::optional<ToolAt>

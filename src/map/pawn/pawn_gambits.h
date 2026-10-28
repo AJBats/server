@@ -650,6 +650,25 @@ namespace pawn
         auto WeighStanding(double after, double& cast) -> std::optional<std::string>;
         auto WeighBurst(CBattleEntity* PTarget, const cardian::tactics::NukePricing& pricing, const std::vector<SpellID>& castable,
                         const cardian::tactics::NukePrice* pick, const pawn::chains::Forecast& chain) -> BurstWeighing;
+        // What nukeCall and burstCost weigh: her priced nukes as bursts on
+        // this chain, and the chain and her MP as she stands
+        struct BurstInputs;
+        auto BurstInputsOf(CBattleEntity* PTarget, const cardian::tactics::NukePricing& pricing, const std::vector<SpellID>& castable,
+                           const pawn::chains::Forecast& chain) -> BurstInputs;
+        // The burst a routine assignment's spell would cost her
+        // (skillchain_math.h burstCost; CastAssignment): her mob's id, when
+        // that burst's cast starts and how long it takes, and the line that
+        // says it. None when it costs nothing. Asked no more than twice a
+        // second
+        struct BurstCost
+        {
+            uint32            mob = 0;
+            timer::time_point startAt{};
+            double            cast = 0.0;
+            std::string       line;
+        };
+        auto BurstCostOf(SpellID spell) -> std::optional<BurstCost>;
+        auto WeighCost(SpellID spell) -> std::optional<BurstCost>;
 
         // Her tactician's weapon skill at a marked Weapon skill (best) row
         // (ROADMAP slice 3h, skillchain_math.h wsCall), on the foe its gate
@@ -675,8 +694,9 @@ namespace pawn
         // (skillchain_math.h orderHold, #503): why, or none
         auto OrderedWsHold(CBattleEntity* PMob) -> std::optional<std::string>;
         // Her best weapon skill alone, as Weapon skill (best) chooses it:
-        // the highest of hers, and one that takes Sneak Attack while Sneak
-        // Attack can go (RESEARCH §17.13 item 5); 0 for none
+        // the one that deals the most on her mob (skillchains.h wsWorth), and
+        // one that takes Sneak Attack while Sneak Attack can go (RESEARCH
+        // §17.13 item 5); 0 for none
         auto BestWeaponSkill() -> uint16;
         // The first row of her tactician's of this kind that runs -- on, its
         // retry run -- and the foe its gate finds now, with its place: what
@@ -803,6 +823,15 @@ namespace pawn
             double                     cast = 0.0; // the burst's own cast, seconds, with an answer
         };
         std::optional<StandMemo>                m_standMemo;
+        // BurstCostOf's last answer, for the spell it was asked about
+        struct CostMemo
+        {
+            timer::time_point        at;
+            SpellID                  spell{};
+            std::optional<BurstCost> cost;
+        };
+        std::optional<CostMemo>                 m_costMemo;
+        std::string                             m_assignHoldSaid; // her assignment waiting for a burst, as last said: its spell and the burst's
         std::string                             m_standRefusal; // why a chain on her mob was no reason to stand, as last said: the reason's name, not its numbers
         // Her casts' resolved time over the spell's own, by skill (NoteCast)
         std::map<uint16, double>                m_castRatio;

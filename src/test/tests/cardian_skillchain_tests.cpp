@@ -834,6 +834,75 @@ TEST_CASE("skillchains: a chain on its way far off, the MP she regains meanwhile
     CHECK(v.mpAt(40, 0.0) == 40);
 }
 
+TEST_CASE("skillchains: a routine assignment waits when it would cost her the burst", "[cardian][skillchains]")
+{
+    const auto list = nukes();
+    BurstView  v;
+    v.mp       = 200;
+    v.elements = kEarth; // Scission, say: Stone II alone bursts it
+    v.chain    = SC_SCISSION;
+
+    // nothing on the way: it costs nothing
+    CHECK_FALSE(cardian::chains::burstCost(list, byId(list, 160), v, 5.5, 25).has_value());
+
+    // a window open 9 s: after a 3 s spell Stone II still lands inside it
+    v.open = 9.0;
+    CHECK_FALSE(cardian::chains::burstCost(list, byId(list, 160), v, 3.0, 25).has_value());
+    // after a 6.5 s one it would land past the window's end: the burst now is lost
+    auto cost = cardian::chains::burstCost(list, byId(list, 160), v, 6.5, 25);
+    REQUIRE(cost.has_value());
+    CHECK(cost->nuke->id == 160);
+    CHECK(cost->start == 0.0);
+
+    // the chain in 1 s: Stone II timed for the window's middle, its cast at
+    // 3.5 s; a 5.5 s spell (Burn's cast and the wait after it) pushes it off
+    // its moment
+    v.open.reset();
+    v.chainIn = 1.0;
+    cost      = cardian::chains::burstCost(list, byId(list, 160), v, 5.5, 25);
+    REQUIRE(cost.has_value());
+    CHECK(cost->nuke->id == 160);
+    CHECK(cost->start == 3.5);
+    // a 2.5 s spell leaves her free by then
+    CHECK_FALSE(cardian::chains::burstCost(list, byId(list, 160), v, 2.5, 25).has_value());
+
+    // the chain far off: the spell costs nothing...
+    v.chainIn = 20.0;
+    CHECK_FALSE(cardian::chains::burstCost(list, byId(list, 160), v, 5.5, 25).has_value());
+    // ... unless its MP leaves her short of Stone II's 40
+    v.mp = 50;
+    cost = cardian::chains::burstCost(list, byId(list, 160), v, 5.5, 25);
+    REQUIRE(cost.has_value());
+    CHECK(cost->nuke->id == 160);
+
+    // the mob falls before the chain lands: nothing to lose
+    v.mp       = 200;
+    v.mobLives = 10.0;
+    CHECK_FALSE(cardian::chains::burstCost(list, byId(list, 160), v, 5.5, 25).has_value());
+}
+
+TEST_CASE("skillchains: a routine assignment waits only for a burst her nuke call would cast", "[cardian][skillchains]")
+{
+    auto      list = nukes();
+    BurstView v;
+    v.mp       = 200;
+    v.elements = kFire; // Liquefaction, say: Fire alone bursts it
+    v.chain    = SC_LIQUEFACTION;
+    v.open     = 9.0;
+
+    // Fire bursts it, ~190 in 3.5 s against Stone II's ~160 in 4.5 s: after
+    // a 7.5 s spell Fire would land past the window's end, so the spell waits
+    auto cost = cardian::chains::burstCost(list, byId(list, 160), v, 7.5, 25);
+    REQUIRE(cost.has_value());
+    CHECK(cost->nuke->id == 144);
+
+    // Stone II, her free pick, deals more a second than the burst: her nuke
+    // call casts no burst, so nothing is lost by the spell
+    list[1].dealt = 400.0;
+    CHECK(cardian::chains::nukeCall(list, byId(list, 160), v).move == NukeMove::Free);
+    CHECK_FALSE(cardian::chains::burstCost(list, byId(list, 160), v, 7.5, 25).has_value());
+}
+
 TEST_CASE("skillchains: a plan ends when its opener, its closer or its player leaves the party, and with his session", "[cardian][skillchains]")
 {
     using cardian::chains::Plan;

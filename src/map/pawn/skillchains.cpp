@@ -809,6 +809,23 @@ namespace pawn::chains
         }
     } // namespace
 
+    auto wsWorth(CCharEntity* PMember, const uint16 skill, CBattleEntity* PMob) -> double
+    {
+        if (PMember == nullptr || PMob == nullptr)
+        {
+            return 0.0;
+        }
+        // One measure for all of hers, so they compare: the server's own on
+        // this mob at her TP. Her landings, mob-blind and with her kill shots
+        // capped by what was left, only where the formula cannot answer
+        if (const auto formula = formulaOf(PMember, PMob, skill); formula.has_value())
+        {
+            return std::max(0.0, *formula);
+        }
+        const auto it = wsMeans.find({ PMember->id, skill });
+        return it != wsMeans.end() ? it->second.value : 0.0;
+    }
+
     auto forms(const cardian::chains::Properties& opening, const cardian::chains::Properties& closing) -> uint8
     {
         return static_cast<uint8>(battleutils::FormSkillchain(listOf(opening), listOf(closing)));
