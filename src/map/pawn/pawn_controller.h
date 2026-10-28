@@ -855,7 +855,8 @@ private:
         bool                      holdsSpot  = false; // Stand: she was placed where she stands (the crescent, the camp's backline): crowded, she gives way as a walk would
         bool                      claimed    = false; // the board has had its say on this point: the walker does not ask again
         // The walker's rules for a trek (ROADMAP W): the zone's every
-        // mob, every ring whole, and, racing with a mob on her, no hold
+        // mob, every ring whole; and, racing with a mob on her -- a trek's,
+        // or the puller running her pull home -- no hold
         bool                      trek       = false;
         bool                      racing     = false;
         // Her point may lie inside a ring: held beside it, a timed visit in
@@ -1891,6 +1892,9 @@ private:
         timer::time_point         movingSince{}; // waiting, her walker had her moving again since: the wait ends once that has lasted
         timer::time_point         visitLookAt{}; // waiting beside a spot inside a ring, her next ask whether a visit may go (VisitAllowed)
         bool                      visitMay = false; // ... and its answer
+        timer::time_point         atSpotSince{};     // at her spot with no shot, since
+        bool                      spotFailed = false; // a second at her spot with no shot: she walks on toward the mob itself, until her spot is chosen afresh
+        bool                      respot     = false; // a ring come over her at her spot: it is chosen again at once
         bool                      visited  = false; // she came to her spot by a visit: the shot goes at once, nothing held inside the ring
     };
     // A mob on the party fighting her now, her own pull aside: she does not
@@ -1909,7 +1913,8 @@ private:
         std::string why;
         double      fightLeft = 0.0;
         double      arriveIn  = 0.0;
-        std::string pacer; // the mage the timing waits on, empty for the fight's end alone
+        std::string pacer;   // what the timing waits on ("Emomali's MP", "the healers' MP"), empty for the fight's end alone
+        std::string healers; // while it waits on them, each healer's MP, for the map log
         double      missingHp = 0.0; // the party's missing HP its curers were charged for, between fights
         double      debtEach  = 0.0; // and the MP each curer owes for it
     };
@@ -1965,6 +1970,12 @@ private:
     void EndPull(std::string_view why);
     void KitTick();
     void SayPull(const std::string& line);
+    // Why she holds the next pull, in party chat, once a reason, and only
+    // while no fight is on the camp: a fight going on is reason enough to
+    // see. `key` is the reason, `line` her words for it (the user,
+    // 2026-10-27: a party should never stand idle without a word)
+    void        SayHold(std::string_view key, const std::string& line);
+    std::string m_PullHoldSaid; // the reasons she has said she holds for, |key| each, until she sets out, a fight starts or she stops looking
     // Her pull line in party chat, naming `PMob` (pull_math.h pullLine): its
     // con at the level the Pull page reads it at, and his call sound
     void CallPull(const CMobEntity* PMob, const CCharEntity* PPlayer);

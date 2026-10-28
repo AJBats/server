@@ -30,6 +30,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -335,9 +336,9 @@ namespace cardian::pull
     // ---- the pipeline (pull P2; the user, 2026-10-16) ----------------------
 
     // The puller keeps the camp busy with no downtime: she plans the party's
-    // whole conveyor. The next mob lands as the party's mages, resting from
-    // the last fight, are a few rest ticks from having the MP it will cost
-    // them, the party's missing HP cured besides -- a mage stays down into a
+    // whole conveyor. The next mob lands as the party's healers, resting from
+    // the last fight, are a few rest ticks from holding together the MP it
+    // will cost them, the party's missing HP cured besides -- a mage stays down into a
     // fight until the tank first needs a cure (kRestInto), unless the last
     // fight linked -- and never before the current fight ends: one mob
     // on the party at a time. She plans backward from there: she tags it so
@@ -351,6 +352,7 @@ namespace cardian::pull
     constexpr double kWayFactor    = 1.2;  // the way walked, against the straight line
     constexpr double kSlackSeconds = 3.0;  // she sets out this much early, to stand ready at the spot
     constexpr double kHoldSeconds  = 90.0; // ready at the spot, a shot held this long is given up
+    constexpr double kHoldSaidFrom = 5.0;  // a set-out this many seconds off or more is a hold, said in party chat; less is the walk's own timing
     constexpr double kWaitLead     = 45.0; // a mob she will wait near (aggro holds it) is set out for this much early: half the hold, so a way that opens at once holds her shot no longer than half its limit
     constexpr double kKinPassOverSeconds = 15.0; // a mob left for another while kin stood on its way back: not picked again for this long
     constexpr float  kYalmsPerPlace = 30.0f; // the pick: a kind a place lower on the list must stand this much nearer
@@ -426,24 +428,105 @@ namespace cardian::pull
         return missing <= 0.0 ? 0.0 : rest::kKneelSeconds + rest::timeToReady(missing, 0, m.interval, m.interval, m.clearMind, m.mpHeal);
     }
 
-    // When the next mob should land, seconds from now, and the mage it waits
-    // on (-1: none, the fight's end alone). `restInto`: how long a mage keeps
-    // kneeling into it -- kRestInto, and none after a fight that linked
+    // Seconds from now until the healers together hold what the next fight
+    // costs them all, the party's missing HP cured besides: one pool, never
+    // each of them full (the user, 2026-10-27). Two healers pipeline: one
+    // with the MP covers the next fight while the other rests through it.
+    // Each healer kneels as readyAt has her -- her kneel goes on, or she
+    // kneels as the fight ends, or now -- and the pool is judged at every
+    // tick of any of them, each held to her own pool's top. What they must
+    // hold is never more than all of them can
+    inline auto poolReadyAt(const std::span<const Mage> healers, const double fightLeft) -> double
+    {
+        struct Kneel
+        {
+            double held  = 0.0;
+            double top   = 0.0;
+            double next  = 0.0; // her next tick, seconds from now
+            int    tick  = 0;   // the tick count it is
+            double every = 0.0;
+            int    clearMind = 0;
+            int    mpHeal    = 0;
+        };
+        std::vector<Kneel> kneels;
+        double             target = 0.0;
+        double             tops   = 0.0;
+        double             pool   = 0.0;
+        for (const auto& m : healers)
+        {
+            Kneel k;
+            k.top       = m.maxMp > 0.0 ? m.maxMp : std::numeric_limits<double>::infinity();
+            k.every     = m.interval;
+            k.clearMind = m.clearMind;
+            k.mpHeal    = m.mpHeal;
+            if (m.kneeling)
+            {
+                k.held = m.mp;
+                k.next = std::max(0.0, m.nextTick);
+                k.tick = m.ticks + 1;
+            }
+            else
+            {
+                const double start = fightLeft > 0.0 ? fightLeft + rest::kKneelSeconds : rest::kKneelSeconds;
+                k.held             = fightLeft > 0.0 ? std::max(0.0, m.mp - m.spendPerSecond * fightLeft) : m.mp;
+                k.next             = start + m.interval;
+                k.tick             = 1;
+            }
+            k.held = std::min(k.held, k.top);
+            target += m.need + m.debt;
+            tops += k.top;
+            pool += k.held;
+            kneels.push_back(k);
+        }
+        target = std::min(target, tops);
+        if (pool >= target)
+        {
+            return 0.0;
+        }
+        for (int step = 0; step < 10000; ++step)
+        {
+            Kneel* first = nullptr;
+            for (auto& k : kneels)
+            {
+                if (k.every > 0.0 && k.held < k.top && (first == nullptr || k.next < first->next))
+                {
+                    first = &k;
+                }
+            }
+            if (first == nullptr)
+            {
+                break;
+            }
+            const double gained = std::min(rest::mpAtTick(first->tick, first->clearMind, first->mpHeal), first->top - first->held);
+            first->held += gained;
+            pool += gained;
+            if (pool >= target)
+            {
+                return first->next;
+            }
+            first->next += first->every;
+            ++first->tick;
+        }
+        return std::numeric_limits<double>::infinity();
+    }
+
+    // When the next mob should land, seconds from now, and whether the
+    // healers' MP holds it past the fight's end (else the fight's end alone).
+    // `restInto`: how long a healer keeps kneeling into it -- kRestInto, and
+    // none after a fight that linked. Only the Healer seats are asked: a
+    // Damage seat's MP never holds the pull (the user, 2026-10-27)
     struct Arrival
     {
         double in    = 0.0;
-        int    pacer = -1;
+        bool   paced = false;
     };
-    inline auto wantArrive(const std::span<const Mage> mages, const double fightLeft, const double restInto = kRestInto) -> Arrival
+    inline auto wantArrive(const std::span<const Mage> healers, const double fightLeft, const double restInto = kRestInto) -> Arrival
     {
-        Arrival out{ std::max(0.0, fightLeft), -1 };
-        for (std::size_t i = 0; i < mages.size(); ++i)
+        Arrival      out{ std::max(0.0, fightLeft), false };
+        const double at = poolReadyAt(healers, fightLeft) - restInto;
+        if (at > out.in)
         {
-            const double at = readyAt(mages[i], fightLeft) - restInto;
-            if (at > out.in)
-            {
-                out = { at, static_cast<int>(i) };
-            }
+            out = { at, true };
         }
         return out;
     }

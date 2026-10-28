@@ -307,7 +307,7 @@ TEST_CASE("Cardian pull: the pipeline lands the next mob as the mages can stand"
         CHECK(readyAt(m, 20.0) == Catch::Approx(20.0 + 1.0 + 50.0));
         const auto arrival = wantArrive(std::vector<Mage>{ m }, 20.0);
         CHECK(arrival.in == Catch::Approx(71.0 - kRestInto));
-        CHECK(arrival.pacer == 0);
+        CHECK(arrival.paced);
     }
 
     SECTION("between fights: her kneel goes on, or she kneels now")
@@ -359,17 +359,27 @@ TEST_CASE("Cardian pull: the pipeline lands the next mob as the mages can stand"
         CHECK(wantArrive(std::vector<Mage>{ owes }, 0.0).in == Catch::Approx(51.0 - kRestInto));
     }
 
-    SECTION("the mage ready last paces the pull")
+    SECTION("the healers are one pool: one with the MP covers the one without")
     {
         Mage early = m;
-        early.mp   = 180.0; // 60 over her need by the fight's end: ready as it ends
-        Mage late  = m;     // 40 short at the fight's end: ready 71 s from now
+        early.mp   = 180.0; // 40 over her need by the fight's end
+        Mage late  = m;     // 40 short at the fight's end: alone, ready 71 s from now
+        CHECK(readyAt(late, 20.0) == Catch::Approx(71.0));
+        // together they hold 240 of the 240 the next fight costs them both as it ends
         const auto arrival = wantArrive(std::vector<Mage>{ late, early }, 20.0);
-        CHECK(arrival.in == Catch::Approx(71.0 - kRestInto));
-        CHECK(arrival.pacer == 0);
-        const auto swapped = wantArrive(std::vector<Mage>{ early, late }, 20.0);
-        CHECK(swapped.in == Catch::Approx(71.0 - kRestInto));
-        CHECK(swapped.pacer == 1);
+        CHECK(arrival.in == Catch::Approx(20.0));
+        CHECK_FALSE(arrival.paced);
+        // two short alike, 80 short together: both kneel as the fight ends,
+        // and their ticks at 41, 51, 61 and 71 s (24, 26, 28, 30) cover it at the fourth
+        const auto both = wantArrive(std::vector<Mage>{ late, late }, 20.0);
+        CHECK(poolReadyAt(std::vector<Mage>{ late, late }, 20.0) == Catch::Approx(71.0));
+        CHECK(both.in == Catch::Approx(71.0 - kRestInto));
+        CHECK(both.paced);
+        // one healer alone: the pool is her
+        for (const double fight : { 0.0, 20.0 })
+        {
+            CHECK(poolReadyAt(std::vector<Mage>{ late }, fight) == Catch::Approx(readyAt(late, fight)));
+        }
     }
 
     SECTION("never before the fight under way ends, and with no mage at its end")
@@ -378,7 +388,7 @@ TEST_CASE("Cardian pull: the pipeline lands the next mob as the mages can stand"
         full.mp   = 200.0;
         full.spendPerSecond = 0.0;
         CHECK(wantArrive(std::vector<Mage>{ full }, 30.0).in == Catch::Approx(30.0));
-        CHECK(wantArrive(std::vector<Mage>{ full }, 30.0).pacer == -1);
+        CHECK_FALSE(wantArrive(std::vector<Mage>{ full }, 30.0).paced);
         CHECK(wantArrive(std::vector<Mage>{}, 12.0).in == Catch::Approx(12.0));
         CHECK(wantArrive(std::vector<Mage>{}, 0.0).in == Catch::Approx(0.0));
     }

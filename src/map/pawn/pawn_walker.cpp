@@ -491,8 +491,10 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
         // with it and holds for no choke: through it, round every other ring
         // she can. On the party's ground the party is there for her, and she
         // holds and sneaks by as ever, whatever is on her (the user,
-        // 2026-10-13)
-        rules.holds = !(FarFromParty() && HatedByAnyMob());
+        // 2026-10-13). The puller running her pull home races wherever she
+        // is: the camp waits for the mob to come in, and nobody comes out to
+        // her (Intent::racing)
+        rules.holds = !intent.racing && !(FarFromParty() && HatedByAnyMob());
         rules.visitStay = intent.visitStay;
     }
 

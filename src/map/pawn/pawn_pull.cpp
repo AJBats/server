@@ -66,8 +66,11 @@
 #include "status_effect_container.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
+#include "ximesh/ximesh.h"
+#include "zone.h"
 
 #include <fmt/format.h>
+#include <magic_enum/magic_enum.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -137,6 +140,24 @@ void CPawnController::SayPull(const std::string& line)
     }
 }
 
+void CPawnController::SayHold(const std::string_view key, const std::string& line)
+{
+    if (CampFight() != nullptr)
+    {
+        m_PullHoldSaid.clear();
+        return;
+    }
+    // each reason once between two fights, so reasons that take turns are
+    // not said again at every turn
+    const auto mark = fmt::format("|{}|", key);
+    if (m_PullHoldSaid.find(mark) != std::string::npos)
+    {
+        return;
+    }
+    m_PullHoldSaid += mark;
+    pawn::tactics::role::sayParty(static_cast<CCharEntity*>(POwner), line);
+}
+
 void CPawnController::EndPull(const std::string_view why)
 {
     m_Pull.reset();
@@ -179,6 +200,9 @@ void CPawnController::RetargetPull(const CMobEntity* PFrom, CMobEntity* PTo, con
     m_Pull->holdSince    = {};
     m_Pull->visitMay     = false;
     m_Pull->visited      = false;
+    m_Pull->spotFailed   = false;
+    m_Pull->respot       = false;
+    m_Pull->atSpotSince  = {};
     m_Pull->called       = 0;
     m_PullCandidate.reset();
     m_PullSaid.clear();
@@ -377,9 +401,20 @@ namespace
     constexpr int   kSpotRoutes = 3;    // the routes asked for, one a ring, before the best clean spot is taken as it is
     constexpr float kVisitSlack = 2.0f; // a mob's rest taken to end this many seconds early, for the spot she waits beside (the sneak-by's slack)
 
+    // Whether the game's sight line runs from `from` to `to`, as a body at
+    // `from` looking at one at `to` asks it (CBaseEntity::CanSeeTarget's ray,
+    // the shooter's way round: the ray is not the same both ways)
+    auto seesFrom(const CBattleEntity* POwner, const position_t& from, const position_t& to) -> bool
+    {
+        constexpr float kEyes = 2.0f; // CanSeeTarget's ENTITY_HEIGHT
+        const auto*     mesh  = POwner->loc.zone != nullptr ? POwner->loc.zone->xiMesh() : nullptr;
+        return mesh == nullptr || !mesh->rayIntersect(Vector3{ from.x, from.y - kEyes, from.z }, Vector3{ to.x, to.y - kEyes, to.z });
+    }
+
     // The spots of the rings round a mob (pull_math.h shotRings) she could
-    // shoot it from: set on the floor, within her reach of it and in its
-    // sight. Farthest ring first, each ring's nearest her first
+    // shoot it from: set on the floor, within her reach of it and in her
+    // sight of it from there. Farthest ring first, each ring's nearest her
+    // first
     auto spotsInSight(CBattleEntity* POwner, CMobEntity* PMob, const float reach) -> std::vector<std::vector<position_t>>
     {
         std::vector<std::vector<position_t>> out;
@@ -394,7 +429,7 @@ namespace
                     continue;
                 }
                 spot.y = *floor;
-                if (distance(spot, PMob->loc.p) <= reach && PMob->CanSeeTarget(spot))
+                if (distance(spot, PMob->loc.p) <= reach && seesFrom(POwner, spot, PMob->loc.p))
                 {
                     kept.push_back(spot);
                 }
@@ -582,16 +617,15 @@ auto CPawnController::PullTimingNow() -> PullTiming
         }
     }
 
-    // The party's mages: every member with MP who rests for it -- kneeling
-    // now (the player too), or a cardian whose marked Rest row kneels her
-    // between pulls (tactics.h offersRest, as RestTick reads it). Anyone
-    // else is as ready as she will be once the fight ends. A member the
+    // The party's healers: every member in the Healer seat with MP, the
+    // player too, as one pool (pull_math.h poolReadyAt). A Damage seat's MP
+    // never holds the pull (the user, 2026-10-27). Each is taken to kneel
+    // between fights, kneeling now or once the fight ends. A healer the
     // tactician has measured is readied as her own rest readies her, for a
     // fight here and a link's reserve; else kUnknownCost of her pool
     std::vector<pull::Mage>  mages;
     std::vector<std::string> names;
-    std::vector<std::size_t> curers;         // the resting mages who cure, by their place in `mages`
-    std::size_t              curerCount = 0; // every member who cures, resting or not: the debt's split
+    std::vector<std::size_t> curers;         // the healers who cure, by their place in `mages`
     double                   missingHp = 0; // the party's, herself and the player included
     const double             now       = pawn::tactics::restSeconds(timer::now());
     if (PPawn->PParty != nullptr)
@@ -607,24 +641,16 @@ auto CPawnController::PullTimingNow() -> PullTiming
                 out.why = fmt::format("{} is down", PMember->getName());
                 return out;
             }
-            missingHp += std::max(0, PMember->GetMaxHP() - PMember->health.hp);
-            if (PMember->GetMaxMP() <= 0)
+            // what a Regen she wears will heal is no healer's to spend
+            missingHp += std::max(0, PMember->GetMaxHP() - PMember->health.hp - pawn::tactics::role::regenLeft(PMember));
+            if (PMember == POwner || PMember->GetMaxMP() <= 0 ||
+                pawn::roster::roleOf(static_cast<CCharEntity*>(PMember)) != cardian::party::Role::Healer)
             {
                 continue;
             }
-            const auto advice = pawn::tactics::restAdvice(static_cast<CCharEntity*>(PMember));
-            const bool cures  = advice.has_value() && advice->cheapestCureMp > 0.0;
-            curerCount += cures ? 1 : 0;
-            if (PMember == POwner)
-            {
-                continue;
-            }
+            const auto  advice  = pawn::tactics::restAdvice(static_cast<CCharEntity*>(PMember));
+            const bool  cures   = advice.has_value() && advice->cheapestCureMp > 0.0;
             const auto* healing = PMember->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing);
-            const bool  rests   = healing != nullptr || (pawn::isPawn(static_cast<CCharEntity*>(PMember)) && pawn::tactics::offersRest(PMember));
-            if (!rests)
-            {
-                continue;
-            }
             pull::Mage m;
             m.mp              = PMember->health.mp;
             m.maxMp           = PMember->GetMaxMP();
@@ -665,27 +691,34 @@ auto CPawnController::PullTimingNow() -> PullTiming
             return out;
         }
     }
-    // Between fights, the party's missing HP is MP its curers have yet to
-    // spend: each owes an even share, counted against her MP (the user,
-    // 2026-10-18), so a messy fight's wounds hold the next pull back. With a
-    // fight on, its cures are already in her spending
+    // Between fights, the party's missing HP is MP its healers have yet to
+    // spend: each who cures owes an even share, counted against the pool
+    // (the user, 2026-10-18), so a messy fight's wounds hold the next pull
+    // back. With a fight on, its cures are already in their spending
     if (fights.empty())
     {
-        const double each = pull::hpDebtEach(missingHp, pawn::tactics::cureExchange(PPawn).hpPerMp, curerCount);
+        const double each = pull::hpDebtEach(missingHp, pawn::tactics::cureExchange(PPawn).hpPerMp, curers.size());
         for (const auto i : curers)
         {
             mages[i].debt = each;
         }
-        out.missingHp = curerCount == 0 ? 0.0 : missingHp;
+        out.missingHp = curers.empty() ? 0.0 : missingHp;
         out.debtEach  = each;
     }
-    // A mage keeps kneeling into the next fight only after one that went as
-    // planned: after a link, she stands ready for it
+    // A healer keeps kneeling into the next fight only after one that went
+    // as planned: after a link, she stands ready for it
     const auto arrival = pull::wantArrive(mages, fightLeft, pawn::tactics::lastFightLinked(PPawn) ? 0.0 : pull::kRestInto);
     out.ready          = true;
     out.fightLeft      = fightLeft;
     out.arriveIn       = arrival.in;
-    out.pacer          = arrival.pacer >= 0 ? names[arrival.pacer] : std::string();
+    if (arrival.paced)
+    {
+        out.pacer = names.size() == 1 ? names.front() + "'s MP" : "the healers' MP";
+        for (std::size_t i = 0; i < mages.size(); ++i)
+        {
+            out.healers += fmt::format("{}{} {:.0f}/{:.0f}", i == 0 ? "" : ", ", names[i], mages[i].mp, mages[i].maxMp);
+        }
+    }
     return out;
 }
 
@@ -736,6 +769,12 @@ auto CPawnController::PullDue(CCharEntity* PPlayer) -> CMobEntity*
         auto* PGo = m_PullGo.has_value() ? m_PullGo->resolve<CMobEntity>() : nullptr;
         return PGo != nullptr && fairGame(PGo) ? PGo : nullptr;
     }
+    // Not looked for a while -- pulling was off, or she was not the
+    // puller: what she held for before is said again
+    if (m_Tick - m_PullLookAt > std::chrono::seconds(5))
+    {
+        m_PullHoldSaid.clear();
+    }
     m_PullLookAt = m_Tick + std::chrono::seconds(1);
     m_PullGo.reset();
 
@@ -744,11 +783,13 @@ auto CPawnController::PullDue(CCharEntity* PPlayer) -> CMobEntity*
     std::string blocker;
     if (!m_KitReady)
     {
+        // her kit's own lines say this in party chat (kNoKitLines)
         blocker = m_KitSaid.empty() ? std::string("she has nothing to pull with yet") : m_KitSaid;
     }
     else if (!pull::anyOn(list))
     {
         blocker = "the Pull page has no kind of mob on";
+        SayHold("list", "Nothing is on the pull list, so no pulling for now.");
     }
     else if (const auto* POnHer = MobOnHer(); POnHer != nullptr)
     {
@@ -767,6 +808,7 @@ auto CPawnController::PullDue(CCharEntity* PPlayer) -> CMobEntity*
         if (!timing.ready)
         {
             blocker = timing.why;
+            SayHold(timing.why, fmt::format("Holding the next pull: {}.", timing.why));
         }
     }
     if (!blocker.empty())
@@ -803,6 +845,7 @@ auto CPawnController::PullDue(CCharEntity* PPlayer) -> CMobEntity*
             // a look that found nothing is made again a little later
             m_PullLookAt = m_Tick + after(pull::kQuietSeconds);
             SayPull("waits to pull: nothing on the list stands within reach");
+            SayHold("nothing", "Nothing on the pull list is in reach right now. Keeping watch.");
             // said now and then: the kinds he has on may all be away, or fighting
             if (m_Tick - m_PullQuietAt > std::chrono::seconds(15))
             {
@@ -835,13 +878,18 @@ auto CPawnController::PullDue(CCharEntity* PPlayer) -> CMobEntity*
     const double leave   = pull::leaveIn(timing.arriveIn, out, back, pace) - (m_PullWaits.empty() ? 0.0 : pull::kWaitLead);
     if (leave > 0.0)
     {
-        SayPull(fmt::format("waits to pull: {} is next, timed to {}", PMob->getName(), timing.pacer.empty() ? std::string("the fight's end") : timing.pacer + "'s MP"));
+        SayPull(fmt::format("waits to pull: {} is next, timed to {}", PMob->getName(), timing.pacer.empty() ? std::string("the fight's end") : timing.pacer));
+        // A wait of a few seconds is the walk's own timing, not a hold
+        if (!timing.pacer.empty() && leave >= pull::kHoldSaidFrom)
+        {
+            SayHold("mp", fmt::format("Heading out for the next pull in about {:.0f} seconds, once the healers have the MP for it.", leave));
+        }
         if (m_Tick - m_PullQuietAt > std::chrono::seconds(10))
         {
             m_PullQuietAt = m_Tick;
             ShowInfoFmt("pull: {} sets out after {} in {:.0f} s: it should land in {:.0f} s (the fight has {:.0f} s left{}{}); her way is {:.0f} y out and {:.0f} y back",
                         POwner->getName(), PMob->getName(), leave, timing.arriveIn, timing.fightLeft,
-                        timing.pacer.empty() ? std::string() : fmt::format(", paced by {}'s MP", timing.pacer),
+                        timing.pacer.empty() ? std::string() : fmt::format(", paced by {} ({})", timing.pacer, timing.healers),
                         timing.debtEach > 0.0 ? fmt::format(", the party's {:.0f} missing HP costing each curer {:.0f} MP", timing.missingHp, timing.debtEach) : std::string(),
                         out, back);
         }
@@ -849,6 +897,7 @@ auto CPawnController::PullDue(CCharEntity* PPlayer) -> CMobEntity*
     }
     m_PullGo       = EntityId(PMob);
     m_PullGoArrive = timing.arriveIn;
+    m_PullHoldSaid.clear();
     return PMob;
 }
 
@@ -1117,7 +1166,7 @@ auto CPawnController::PullTick(const Place* place, CCharEntity* PPlayer, const b
         if (m_Tick >= m_Pull->cleanAt && !Visiting())
         {
             m_Pull->cleanAt  = m_Tick + std::chrono::seconds(waiting ? 3 : 1);
-            const bool roamed = !m_Pull->spot.has_value() || distance(m_Pull->spotFor, PMob->loc.p) > pull::kSpotRoam;
+            const bool roamed = !m_Pull->spot.has_value() || distance(m_Pull->spotFor, PMob->loc.p) > pull::kSpotRoam || m_Pull->respot;
             if (roamed || waiting)
             {
                 const auto spot = ShotSpotFor(PMob, PullBalls(PMob));
@@ -1127,11 +1176,21 @@ auto CPawnController::PullTick(const Place* place, CCharEntity* PPlayer, const b
                     return false;
                 }
                 const auto rank = [](const ShotSpot& s) { return s.open ? 2 : s.clean ? 1 : 0; };
-                if (roamed || rank(*spot) > rank(*m_Pull->spot))
+                // a ring over her spot that gives her the same spot again:
+                // she walks on toward the mob, as for a spot she cannot use
+                if (m_Pull->respot && m_Pull->spot.has_value() && distance(spot->at, m_Pull->spot->at) < 1.0f)
                 {
-                    m_Pull->spot    = *spot;
-                    m_Pull->spotFor = PMob->loc.p;
+                    ShowInfoFmt("pull: {}'s spot for {} comes out the same again; she walks on toward it", POwner->getName(), PMob->getName());
+                    m_Pull->spotFailed = true;
                 }
+                else if (roamed || rank(*spot) > rank(*m_Pull->spot))
+                {
+                    m_Pull->spot        = *spot;
+                    m_Pull->spotFor     = PMob->loc.p;
+                    m_Pull->spotFailed  = false;
+                    m_Pull->atSpotSince = {};
+                }
+                m_Pull->respot = false;
             }
         }
 
@@ -1142,8 +1201,56 @@ auto CPawnController::PullTick(const Place* place, CCharEntity* PPlayer, const b
         // in behind their backs, where she stands in one by plan
         const auto outcome   = m_Plan.outcome;
         const bool atVisit   = Visiting() && distance(POwner->loc.p, m_Pull->spot->at) < 0.5f;
-        const bool clearHere = (outcome == cardian::walk::Outcome::Walking || outcome == cardian::walk::Outcome::Held) &&
-                               BallHolding(m_DangerBalls, PMob, POwner->loc.p, true) == nullptr;
+        const auto* PRing    = BallHolding(m_DangerBalls, PMob, POwner->loc.p, true);
+        const bool  clearHere = (outcome == cardian::walk::Outcome::Walking || outcome == cardian::walk::Outcome::Held) && PRing == nullptr;
+
+        // At her spot a second and still no shot, or no walk of hers reaching
+        // it, she says why, once. A ring come over her (its mob roamed or
+        // turned there), her spot is chosen again round it; else -- her sight
+        // from where she stands is not the spot's, she stands a little off it,
+        // the spot is ground she cannot walk to -- she walks on toward the
+        // mob itself, the walker keeping her out of every ring, until she can
+        const bool atSpot  = distance(POwner->loc.p, m_Pull->spot->at) <= 1.0f;
+        const bool noRoute = outcome == cardian::walk::Outcome::NoRoute;
+        if (!m_Pull->spotFailed && !Visiting() && (atSpot || noRoute) && !(inReach && clearHere))
+        {
+            if (m_Pull->atSpotSince == timer::time_point{})
+            {
+                m_Pull->atSpotSince = m_Tick;
+            }
+            else if (m_Tick - m_Pull->atSpotSince > std::chrono::seconds(1))
+            {
+                const float off = distance(POwner->loc.p, PMob->loc.p);
+                const auto  why = off > reach                       ? fmt::format("{:.1f} y off, past her reach of {:.1f}", off, reach)
+                                  : !POwner->CanSeeTarget(PMob)     ? std::string("she cannot see it from there")
+                                  : PRing != nullptr                ? fmt::format("{}'s circle is over her", PRing->getName())
+                                                                    : fmt::format("her walk is {}", magic_enum::enum_name(outcome));
+                const auto then = PRing != nullptr ? "chooses her spot again" : "walks on toward it";
+                if (atSpot)
+                {
+                    ShowInfoFmt("pull: {} is at her spot for {} and cannot shoot it ({}); {}", POwner->getName(), PMob->getName(), why, then);
+                }
+                else
+                {
+                    ShowInfoFmt("pull: no walk of {}'s reaches her spot for {} ({}); {}", POwner->getName(), PMob->getName(), why, then);
+                }
+                if (PRing != nullptr)
+                {
+                    m_Pull->respot      = true;
+                    m_Pull->cleanAt     = m_Tick;
+                    m_Pull->atSpotSince = {};
+                }
+                else
+                {
+                    m_Pull->spotFailed = true;
+                }
+            }
+        }
+        else
+        {
+            m_Pull->atSpotSince = {};
+        }
+
         if (inReach && (atVisit || clearHere))
         {
             m_Pull->visited = atVisit;
@@ -1162,7 +1269,7 @@ auto CPawnController::PullTick(const Place* place, CCharEntity* PPlayer, const b
                 RefreshDangers(PMob);
                 Intent intent;
                 intent.kind       = Intent::Kind::Path;
-                intent.point      = m_Pull->spot->at;
+                intent.point      = m_Pull->spotFailed ? PMob->loc.p : m_Pull->spot->at;
                 intent.arrive     = 0.2f;
                 intent.tolerance  = 0.0f;
                 intent.keepsClear = true;
@@ -1431,6 +1538,11 @@ auto CPawnController::PullTick(const Place* place, CCharEntity* PPlayer, const b
                 // Shot from in behind a mob's back, she stands in its ring:
                 // her run home is vetted, out of it first, whatever her rows
                 intent.keepsClear = m_Pull->visited;
+                // With her pull on her she holds for no ring across her way:
+                // through it, round every other she can. The camp waits for
+                // the mob to come in, and a hold leaves her taking its hits
+                // where nobody reaches her (the user, 2026-10-26)
+                intent.racing = POn == POwner;
                 Move(intent);
             }
             return true;
