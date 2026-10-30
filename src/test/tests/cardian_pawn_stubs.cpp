@@ -82,11 +82,6 @@ namespace pawn::errands
 
 namespace pawn::world
 {
-    auto isBody(const uint32 /* charid */) -> bool
-    {
-        return false;
-    }
-
     auto capExp(const CCharEntity* /* PChar */, const uint32 exp) -> uint32
     {
         return exp;

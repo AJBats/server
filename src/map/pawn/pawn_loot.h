@@ -38,9 +38,13 @@ namespace pawn::loot
     void handOff(CCharEntity* PPawn);
 
     // A drop the treasure pool awards a wild cardian -- a body of the world,
-    // a guest in a real player's party -- goes into the void: the pool says
-    // she obtained it, and nothing lands in her bag (the user, 2026-10-08).
-    // His own cardians, his recruits and alts, keep what it gives them.
-    // Asked by the pool at each award (treasure_pool.cpp)
+    // a guest in a real player's party or out on her own -- goes into the
+    // void: the pool says she obtained it, and nothing lands in her bag (the
+    // user, 2026-10-08). So does her share of a kill's gil. Nothing keeps a
+    // drop out of the pool (the user, 2026-10-30): the void is the only
+    // gate. His own cardians -- those he recruited as his own or made --
+    // and his alts keep what it gives them; the world's bodies his
+    // linkshell page lists as Recruits are still the world's. Asked by the
+    // pool at each award (treasure_pool.cpp) and by charutils::DistributeGil
     auto voids(const CCharEntity* PWinner) -> bool;
 } // namespace pawn::loot

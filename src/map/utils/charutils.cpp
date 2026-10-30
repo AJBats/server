@@ -39,8 +39,9 @@
 #include <chrono>
 
 #include "map_constants.h"
-#include "pawn/pawn.h"  // CARDIAN: her club signs out with her (removeCharFromZone)
-#include "pawn/world.h" // CARDIAN: the world's exp cap at the grant (AddExperiencePoints)
+#include "pawn/pawn.h"      // CARDIAN: her club signs out with her (removeCharFromZone)
+#include "pawn/pawn_loot.h" // CARDIAN: a wild cardian's share of gil goes into the void (DistributeGil)
+#include "pawn/world.h"     // CARDIAN: the world's exp cap at the grant (AddExperiencePoints)
 #include "persist_batch.h"
 
 #include "lua/luautils.h"
@@ -4510,6 +4511,10 @@ void DistributeGil(CCharEntity* PChar, CMobEntity* PMob)
 
             for (auto PMember : members)
             {
+                if (pawn::loot::voids(PMember)) // CARDIAN: a wild cardian's share goes into the void
+                {
+                    continue;
+                }
                 auto transaction = ItemClaimTransaction::start(PMember);
                 if (!transaction || !transaction->earn(gilPerPerson) || !transaction->commit())
                 {
@@ -4521,7 +4526,7 @@ void DistributeGil(CCharEntity* PChar, CMobEntity* PMob)
             }
         }
     }
-    else if (isWithinDistance(PChar->loc.p, PMob->loc.p, 100.0f))
+    else if (isWithinDistance(PChar->loc.p, PMob->loc.p, 100.0f) && !pawn::loot::voids(PChar)) // CARDIAN: a wild cardian's gil goes into the void
     {
         auto transaction = ItemClaimTransaction::start(PChar);
         if (!transaction || !transaction->earn(gil) || !transaction->commit())

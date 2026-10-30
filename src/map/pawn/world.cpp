@@ -615,9 +615,9 @@ namespace
     // The slow checks on a standing body, every fifth zone tick: her census
     // target re-read now and then, a ding of hers said once, her Signet kept
     // up. Her exp and her drops are settled where the game grants them
-    // (capExp at AddExperiencePoints; a world body's kill pays no gil and no
-    // drops at the mob's death, CMobEntity::DistributeRewards): nothing here
-    // takes anything back
+    // (capExp at AddExperiencePoints; what the treasure pool or a kill's gil
+    // gives her goes into the void, pawn_loot.h voids): nothing here takes
+    // anything back
     void sweepBody(Body& body)
     {
         auto* PPawn = pawn::findPawn(body.charid);

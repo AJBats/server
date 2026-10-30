@@ -144,6 +144,13 @@ namespace pawn::loot
                 continue;
             }
 
+            // A pool of the world's bodies alone -- the world's own farmers, or
+            // hires a player left -- is said nowhere: none of it reaches a bag
+            if (std::ranges::all_of(staying, [](const CCharEntity* PCardian) { return voids(PCardian); }))
+            {
+                continue;
+            }
+
             // a guest's win leaves no trace in her bag: it went into the void (voids)
             const bool  guests = std::ranges::any_of(staying, [](const CCharEntity* PCardian) { return voids(PCardian); });
             std::string taker  = guests ? "won by a guest, into the void" : "lost, no one staying can hold it";
