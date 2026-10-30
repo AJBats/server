@@ -81,7 +81,7 @@ namespace pawn::porter
 
         constexpr auto  kLandedFor    = 1500ms; // after his zone-in, and a position from his client since: he is in
         constexpr auto  kAskFor       = 60s;    // the question after a rental waits this long for him to land and his addon to hear it
-        constexpr auto  kGetDownBeat  = 1500ms; // got down at a city's gate: the dismount played before he goes on on foot
+        constexpr auto  kGetDownBeat  = 5s;     // got down at a city's gate: the dismount played before he goes on on foot (his client holds him still some 3 to 4.5 s)
         constexpr float kGateGetDown  = 10.0f;  // a city's gate: his route stops this far short of its line, short of its box, which the game refuses a rider
         constexpr float kSpotCloseTo  = 2.0f;   // a place's spot: his route ends this far short of it
         constexpr float kMobOnReach   = 30.0f;  // a mob on him this near ends the ride
@@ -958,6 +958,15 @@ namespace pawn::porter
             return since >= kLandedFor && age.has_value() && *age < since;
         }
 
+        // A cutscene has his client, which sends no position until it ends:
+        // the clocks that wait for his client to come in stand still through
+        // one (a mission's scene as he lands)
+        auto inCutscene(const uint32 charid) -> bool
+        {
+            const auto* PChar = zoneutils::GetChar(charid);
+            return PChar != nullptr && PChar->isInEvent();
+        }
+
         // One tick of his ride, on his zone's tick
         void ride(CCharEntity* PChar, const uint32 charid)
         {
@@ -1666,9 +1675,16 @@ class PorterModule : public CPPModule
                 it = journeys.erase(it);
                 continue;
             }
-            if (it->second.landing && realtime::now() - it->second.landedAt > kLandingLost)
+            if (it->second.landing)
             {
-                lost.push_back(it->first);
+                if (inCutscene(it->first))
+                {
+                    it->second.landedAt = realtime::now();
+                }
+                else if (realtime::now() - it->second.landedAt > kLandingLost)
+                {
+                    lost.push_back(it->first);
+                }
             }
             ++it;
         }
@@ -1678,6 +1694,10 @@ class PorterModule : public CPPModule
         }
         for (auto it = questions.begin(); it != questions.end();)
         {
+            if (inCutscene(it->first))
+            {
+                it->second.askedAt = realtime::now();
+            }
             if (!pawn::players::online(it->first) || realtime::now() - it->second.askedAt > kAskFor)
             {
                 it = questions.erase(it);
