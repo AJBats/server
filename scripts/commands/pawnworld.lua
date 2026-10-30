@@ -1,12 +1,9 @@
 -----------------------------------
--- func: pawnworld <stand|ring|fade|farm|idle|slots|fill|slot|cap|faded> ...
+-- func: pawnworld <stand|fade|farm|idle|slots|fill|slot|cap|faded> ...
 -- desc: Cardian world (ROADMAP D0-D3) - the developer's hands on the world's
 --       adventurers. Players never need it: a zone fills itself from its
 --       slot table (modules/cardian/world/<Zone>.yaml).
 --         stand <census name>   she stands where you are, minted on first use
---         ring <count>          count of them in a ring round you, a couple a tick, pinned:
---                               outside the waterfall and its caps (deprecated; the
---                               ladder never hears of them)
 --         fade <name|all>       fades her, or all of them, out
 --         farm <name|all>       she farms: mobs in her band within reach, else she
 --                               heads for the nearest farther off and fights what she meets
@@ -27,7 +24,7 @@ commandObj.cmdprops =
     parameters = 'sssss',
 }
 
-local usage = 'Usage: !pawnworld <stand|ring|fade|farm|idle|slots|fill|faded> [name|count], cap [standing] [faded], or slot <farm|stand> <lo>-<hi> [count] [spread]'
+local usage = 'Usage: !pawnworld <stand|fade|farm|idle|slots|fill|faded> [name|count], cap [standing] [faded], or slot <farm|stand> <lo>-<hi> [count] [spread]'
 
 commandObj.onTrigger = function(player, verb, arg, arg2, arg3, arg4)
     if verb == 'stand' and arg ~= nil and arg ~= '' then
@@ -36,9 +33,6 @@ commandObj.onTrigger = function(player, verb, arg, arg2, arg3, arg4)
         else
             player:printToPlayer(string.format('%s does not stand yet: not in the census, already present, the world is off, or the caps have no room (!pawnworld cap).', arg))
         end
-    elseif verb == 'ring' and tonumber(arg) ~= nil and tonumber(arg) >= 1 then
-        local n = player:worldRing(math.floor(tonumber(arg)))
-        player:printToPlayer(string.format('%d will stand in a ring around you, a couple a tick.', n))
     elseif verb == 'fade' and arg ~= nil and arg ~= '' then
         player:printToPlayer(string.format('%d faded.', player:worldDespawn(arg)))
     elseif verb == 'farm' and arg ~= nil and arg ~= '' then

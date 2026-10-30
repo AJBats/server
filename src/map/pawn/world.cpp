@@ -94,7 +94,6 @@ namespace
         uint16      zone    = 0;
         position_t  point{};
         bool        present = false;
-        bool        pinned  = false;
 
         // Her contract holds her (ROADMAP H, the party waits): signed out
         // with the last human in her party, she keeps this record and her
@@ -174,7 +173,6 @@ namespace
     std::unordered_map<uint32, Body>        bodies; // by charid
     std::unordered_map<std::string, uint32> charidByName;
     std::unordered_map<uint16, uint32>      realPlayersLastTick;
-    bool                                    debugRingPlaced = false;
 
     // Liveness: a zone is live while a real player is in it or, within
     // WORLD_LIVE_RADIUS zone lines, next to it; -1 keeps every zone live.
@@ -263,17 +261,14 @@ namespace
 #endif
     }
 
-    // Bodies waiting to stand, a few per zone tick: minting and loading a
-    // character is hundreds of queries, and a ring of forty in one tick
-    // would stall the map past its watchdog
+    // A slot's occupants waiting to be placed, paced by the world's
+    // placement budget: presence now, her body when the zone is live
     struct Pending
     {
         std::string name;
         uint16      zone = 0;
         position_t  point{};
-        bool        pinned  = false;
         bool        farming = false;
-        bool        presence = false; // a slot's occupant: presence now, her body when the zone is live
         int32       slot     = -1;
         float       roam     = 0.0f;
         uint32      party    = 1;
@@ -289,7 +284,6 @@ namespace
         bool                      seasoned = false; // dealt as the zone filled every seat at once: her stay began a while ago (stayFor)
     };
     std::vector<Pending> pending;
-    constexpr uint32     kStandPerTick = 2;
 
     // The whole world's placements share one budget: a presence is a few queries, and every zone placing
     // its own in the same tick would be a burst the map stalls on. pawn.WORLD_PLACE_RATE a second, as a
@@ -2390,7 +2384,7 @@ namespace
     // the same seats again
     auto queuedFor(const uint16 zoneId, const uint32 slot) -> size_t
     {
-        return static_cast<size_t>(std::ranges::count_if(pending, [&](const Pending& p) { return p.presence && p.zone == zoneId && p.slot == static_cast<int32>(slot); }));
+        return static_cast<size_t>(std::ranges::count_if(pending, [&](const Pending& p) { return p.zone == zoneId && p.slot == static_cast<int32>(slot); }));
     }
 
     // Presence queued for what a slot is short of. A town seat fills only
@@ -2435,7 +2429,7 @@ namespace
         const bool town   = isCity(PZone);
         for (const auto& name : chooseOccupants(zoneId, slot, spec, spec.seats() - have, !hasHealer && spec.isCamp(), town, table.turns[slot], table.recent[slot]))
         {
-            Pending item{ .name = name, .zone = zoneId, .point = slotPoint(spec, name), .pinned = false, .farming = spec.farms(), .presence = true, .slot = static_cast<int32>(slot), .roam = spec.roam, .party = std::max<uint32>(1, spec.party) };
+            Pending item{ .name = name, .zone = zoneId, .point = slotPoint(spec, name), .farming = spec.farms(), .slot = static_cast<int32>(slot), .roam = spec.roam, .party = std::max<uint32>(1, spec.party) };
             item.seasoned = seasoned;
             if (spec.clustered())
             {
@@ -2533,7 +2527,6 @@ namespace
         body.name         = item.name;
         body.zone         = zoneId;
         body.point        = item.point;
-        body.pinned       = false;
         body.farming      = item.farming;
         body.slot         = item.slot;
         body.roam         = item.roam;
@@ -2581,18 +2574,9 @@ namespace
     void unseat(Body& body, const std::string_view why)
     {
         // Out of the waterfall: the ladder takes her body and her row on the
-        // way (fadeBody, markAbsent); the seat is freed here. The ring's
-        // pinned bodies were never in it
+        // way (fadeBody, markAbsent); the seat is freed here
         ShowInfoFmt("world: {} leaves her seat ({})", body.name, why);
-        if (body.pinned)
-        {
-            fadeOut(body, why);
-            pawn::markAbsent(body.charid);
-        }
-        else
-        {
-            pawn::seats::withdraw(body.charid);
-        }
+        pawn::seats::withdraw(body.charid);
         if (auto tit = zoneSlots.find(body.zone); tit != zoneSlots.end() && body.slot >= 0 && static_cast<size_t>(body.slot) < tit->second.occupants.size())
         {
             auto&      table = tit->second;
@@ -2967,8 +2951,8 @@ namespace
     }
 
     // Everything the zone holds returns to the pool: bodies fade, presences
-    // go, the table is dropped for a fresh read; the ring's pinned bodies
-    // stay, and so does one with a player, seatless now: she is his
+    // go, the table is dropped for a fresh read; one with a player stays,
+    // seatless now: she is his
     auto clearZone(CZone* PZone) -> uint32
     {
         const auto zoneId  = static_cast<uint16>(PZone->GetID());
@@ -2976,7 +2960,7 @@ namespace
         for (auto it = bodies.begin(); it != bodies.end();)
         {
             auto& body = it->second;
-            if (body.zone != zoneId || body.pinned)
+            if (body.zone != zoneId)
             {
                 ++it;
                 continue;
@@ -3041,7 +3025,7 @@ namespace pawn::world
         return on;
     }
 
-    bool spawnByName(const std::string& rawName, CZone* PZone, const position_t& point, const bool pinned)
+    bool spawnByName(const std::string& rawName, CZone* PZone, const position_t& point)
     {
         if (!isEnabled() || PZone == nullptr)
         {
@@ -3069,23 +3053,10 @@ namespace pawn::world
         body.name          = name;
         body.zone          = static_cast<uint16>(PZone->GetID());
         body.point         = point;
-        body.pinned        = pinned;
         body.farming       = false;
         body.signedIn      = false;
         body.downSince.reset();
         charidByName[name] = charid;
-        if (pinned)
-        {
-            // The debug ring stands outside the waterfall: never offered to
-            // the ladder, never faded by it
-            if (!fadeIn(body))
-            {
-                bodies.erase(charid);
-                charidByName.erase(name);
-                return false;
-            }
-            return true;
-        }
         // Offered at the front of her tier and run at once: she stands now
         // if the caps allow, and stays offered if they do not
         pawn::seats::offerWorld(charid, body.zone);
@@ -3108,14 +3079,7 @@ namespace pawn::world
                     continue;
                 }
                 faded += body.present ? 1 : 0;
-                if (body.pinned)
-                {
-                    fadeOut(body, "told to");
-                }
-                else
-                {
-                    pawn::seats::withdraw(charid);
-                }
+                pawn::seats::withdraw(charid);
                 dropped.push_back(charid);
             }
             for (const auto charid : dropped)
@@ -3135,14 +3099,7 @@ namespace pawn::world
             if (const auto bit = bodies.find(it->second); bit != bodies.end())
             {
                 faded += bit->second.present ? 1 : 0;
-                if (bit->second.pinned)
-                {
-                    fadeOut(bit->second, "told to");
-                }
-                else
-                {
-                    pawn::seats::withdraw(it->second);
-                }
+                pawn::seats::withdraw(it->second);
                 bodies.erase(bit);
             }
             charidByName.erase(it);
@@ -3317,7 +3274,7 @@ namespace pawn::world
         // she has faded (the zone tick). Else, standing, she is the world's
         // where she stands and her seat's clocks run again; faded or out,
         // her next stand is at her seat
-        body.toPool = body.slot < 0 && !body.pinned;
+        body.toPool = body.slot < 0;
         if (!body.present && !body.toPool)
         {
             pawn::seats::offerWorld(charid, body.zone);
@@ -3372,9 +3329,9 @@ namespace pawn::world
         out.reserve(bodies.size());
         for (const auto& [charid, body] : bodies)
         {
-            if (body.pinned || body.resident)
+            if (body.resident)
             {
-                continue; // the debug ring stands outside the waterfall, and a teleporter keeps to her hub
+                continue; // a teleporter keeps to her hub
             }
             Presence p{ .charid = charid, .zone = body.zone, .signedIn = body.signedIn };
             if (const auto* d = dealableOf(body.name); d != nullptr)
@@ -3647,73 +3604,6 @@ namespace pawn::world
         ShowInfoFmt("world: {} comes to {} out of sight, to stand at ({:.1f}, {:.1f}, {:.1f}) in zone {}", body.name, pawn::seats::nameOf(playerCharID),
                     at.x, at.y, at.z, zone);
         return true;
-    }
-
-    auto ring(CZone* PZone, const position_t& centre, const uint32 count, const bool farming) -> uint32
-    {
-        if (!isEnabled() || PZone == nullptr || count == 0)
-        {
-            return 0;
-        }
-
-        // Every name up front: standing one runs queries of its own. A name
-        // the census tool has not minted and finished cannot stand and is
-        // left out of the pool, said once here. Names in the bank are not in
-        // the world.
-        std::vector<std::string> names;
-        dealableNames(); // the cohorts in play as of now
-        if (const auto rset = db::preparedStmt("SELECT c.name, c.charid, c.anchor, c.cohort, c.cohort2, COALESCE(p.kitted, 0) AS finished FROM cardian_census c "
-                                               "LEFT JOIN cardian_pawns p ON p.pawn_charid = c.charid WHERE c.anchor <> 'bank' ORDER BY c.seed");
-            rset)
-        {
-            while (rset->next())
-            {
-                const auto name = rset->get<std::string>("name");
-                if (rset->get<uint32>("charid") == 0 && !inPlay(rset->get<std::string>("anchor"), rset->get<uint32>("cohort"), rset->get<uint32>("cohort2")))
-                {
-                    continue; // a cohort's body is minted once it is in play
-                }
-                if (rset->get<uint32>("charid") == 0)
-                {
-                    ShowErrorFmt("world: {} is in the census with no body; stop the servers and run census.py mint", name);
-                    continue;
-                }
-                if (rset->get<uint8>("finished") == 0)
-                {
-                    ShowErrorFmt("world: {} was minted but never finished; stop the servers and run census.py finish", name);
-                    continue;
-                }
-                names.push_back(name);
-            }
-        }
-
-        const float radius = 3.0f + 0.35f * static_cast<float>(count);
-        uint32      queued = 0;
-        for (const auto& name : names)
-        {
-            if (queued >= count)
-            {
-                break;
-            }
-            if (const auto it = charidByName.find(name); it != charidByName.end())
-            {
-                if (const auto bit = bodies.find(it->second); bit != bodies.end() && bit->second.present)
-                {
-                    continue;
-                }
-            }
-            if (std::ranges::any_of(pending, [&](const Pending& p) { return p.name == name; }))
-            {
-                continue;
-            }
-            const float angle = 2.0f * std::numbers::pi_v<float> * static_cast<float>(queued) / static_cast<float>(count);
-            position_t  point = centre;
-            point.x           = centre.x + radius * std::cos(angle);
-            point.z           = centre.z + radius * std::sin(angle);
-            pending.push_back(Pending{ .name = name, .zone = static_cast<uint16>(PZone->GetID()), .point = point, .pinned = true, .farming = farming });
-            ++queued;
-        }
-        return queued;
     }
 
     // Every present body the name means: one, or all of the crowd (a body
@@ -4224,31 +4114,9 @@ namespace pawn::world
             tickTown(PZone, now, poll);
         }
 
-        // The debug ring: once, in its own zone, from the first tick of any
-        if (!debugRingPlaced)
-        {
-            debugRingPlaced = true;
-            if (const auto count = settings::get<uint32>("pawn.WORLD_DEBUG_RING"); count > 0)
-            {
-                if (auto* PRingZone = zoneutils::GetZone(static_cast<xi::ZoneId>(settings::get<uint16>("pawn.WORLD_DEBUG_ZONE"))); PRingZone != nullptr)
-                {
-                    position_t centre{};
-                    centre.x = settings::get<float>("pawn.WORLD_DEBUG_X");
-                    centre.y = settings::get<float>("pawn.WORLD_DEBUG_Y");
-                    centre.z = settings::get<float>("pawn.WORLD_DEBUG_Z");
-                    const bool farming = settings::get<bool>("pawn.WORLD_DEBUG_FARM");
-                    const auto queued  = ring(PRingZone, centre, count, farming);
-                    ShowInfoFmt("world: debug ring of {} in {} ({} queued{})", count, PRingZone->getName(), queued, farming ? ", farming" : "");
-                }
-            }
-        }
-
         // The queue: this zone's pending bodies, nearest first -- a zone places only when no zone nearer
-        // the players has someone waiting. Every placement spends the world's placement budget; a body
-        // standing straight up from the queue (the debug ring) is also a character load, and a zone
-        // takes kStandPerTick of those a tick
-        uint32 stoodThisTick = 0;
-        bool   myTurn        = false;
+        // the players has someone waiting. Every placement spends the world's placement budget
+        bool myTurn = false;
         if (std::ranges::any_of(pending, [&](const Pending& p) { return p.zone == zoneId; }))
         {
             const uint32 mine = hopsOf(zoneId);
@@ -4256,7 +4124,7 @@ namespace pawn::world
         }
         for (auto it = pending.begin(); myTurn && it != pending.end();)
         {
-            if (it->zone != zoneId || (!it->presence && stoodThisTick >= kStandPerTick))
+            if (it->zone != zoneId)
             {
                 ++it;
                 continue;
@@ -4267,19 +4135,7 @@ namespace pawn::world
             }
             const Pending item = *it;
             it                 = pending.erase(it);
-            if (item.presence)
-            {
-                placePresence(item, PZone);
-                continue;
-            }
-            if (spawnByName(item.name, PZone, item.point, item.pinned))
-            {
-                ++stoodThisTick;
-                if (item.farming)
-                {
-                    farm(item.name, true);
-                }
-            }
+            placePresence(item, PZone);
         }
 
         // The town sign-in: the cohorts in play brought to the cities once every seat is placed,
@@ -4345,15 +4201,8 @@ namespace pawn::world
             }
             else if (now - *body.downSince >= std::chrono::seconds(settings::get<uint32>("pawn.WORLD_KO_FADE")))
             {
-                if (body.pinned)
-                {
-                    fadeOut(body, "KO'd");
-                }
-                else
-                {
-                    pawn::seats::setDown(charid, true);
-                }
-                if (!body.pinned && !body.returnAt.has_value())
+                pawn::seats::setDown(charid, true);
+                if (!body.returnAt.has_value())
                 {
                     body.returnAt = now + std::chrono::seconds(settings::get<uint32>("pawn.WORLD_KO_RETURN"));
                 }

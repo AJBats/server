@@ -353,7 +353,7 @@ class PawnModule : public CPPModule
             return pawn::despawn(targetName);
         };
 
-        // The world's adventurers (ROADMAP D0): stand, fade, ring, walk
+        // The world's adventurers (ROADMAP D0): stand, fade, walk
         ::lua["CBaseEntity"]["worldSpawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -361,23 +361,13 @@ class PawnModule : public CPPModule
             {
                 return false;
             }
-            return pawn::world::spawnByName(name, PChar->loc.zone, PChar->loc.p, false);
+            return pawn::world::spawnByName(name, PChar->loc.zone, PChar->loc.p);
         };
 
         ::lua["CBaseEntity"]["worldDespawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> uint32
         {
             std::ignore = PLuaBaseEntity;
             return pawn::world::despawnByName(name);
-        };
-
-        ::lua["CBaseEntity"]["worldRing"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint32 count) -> uint32
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr || PChar->loc.zone == nullptr)
-            {
-                return 0;
-            }
-            return pawn::world::ring(PChar->loc.zone, PChar->loc.p, count, false);
         };
 
         ::lua["CBaseEntity"]["worldFarm"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> uint32

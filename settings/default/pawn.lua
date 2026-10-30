@@ -671,17 +671,6 @@ xi.settings.pawn =
     -- unless the mob is on the party's Healer or on someone under half HP.
     TANK_PROVOKE_HOLD_HP = 25,
 
-    -- The debug ring: at boot, WORLD_DEBUG_RING census bodies stand in a
-    -- ring at the point in WORLD_DEBUG_ZONE, pinned (they never fade),
-    -- farming if WORLD_DEBUG_FARM. The measurements run with no client
-    -- attached. 0 = no ring.
-    WORLD_DEBUG_RING = 0,
-    WORLD_DEBUG_ZONE = 100,    -- West Ronfaure
-    WORLD_DEBUG_X    = -300.0, -- the rabbit field inside the gate
-    WORLD_DEBUG_Y    = -51.0,
-    WORLD_DEBUG_Z    = 283.0,
-    WORLD_DEBUG_FARM = false,  -- the ring's bodies farm
-
     -- The slot tables (ROADMAP D3): with WORLD_SLOTS on, a zone with a
     -- modules/cardian/world/<Zone>.yaml fills its slots from the census on
     -- its first tick -- every occupant gets presence (a session row, so

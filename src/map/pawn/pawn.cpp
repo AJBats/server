@@ -1308,7 +1308,7 @@ namespace pawn
         seats::withdraw(charid);
         if (PZone != nullptr)
         {
-            world::spawnByName(name, PZone, at, false);
+            world::spawnByName(name, PZone, at);
         }
         ShowInfoFmt("pawn: {} releases {} ({}) back to the world{}", PPlayer->getName(), name, charid,
                     PZone != nullptr ? ", where she stood" : "");

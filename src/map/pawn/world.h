@@ -51,9 +51,9 @@ namespace pawn::world
     auto isLeaving(uint32 charid) -> bool;
 
     // Stand the named census adventurer at the point in the zone, minted on
-    // first use. A pinned body never fades. False if she is not in the
-    // census, already present, or the world is off.
-    bool spawnByName(const std::string& name, CZone* PZone, const position_t& point, bool pinned);
+    // first use. False if she is not in the census, already present, or the
+    // world is off.
+    bool spawnByName(const std::string& name, CZone* PZone, const position_t& point);
 
     // Fade the named body, or every body for "all"; how many faded
     auto despawnByName(const std::string& name) -> uint32;
@@ -157,10 +157,6 @@ namespace pawn::world
     // she goes as signOutTown lets her go -- unless a player has her, she
     // is away, or her yes in a shout still stands for his invite
     void signInDropped(uint32 charid);
-
-    // Queue count census bodies for a ring round the centre, pinned, a few
-    // standing per zone tick, farming if asked. How many were queued
-    auto ring(CZone* PZone, const position_t& centre, uint32 count, bool farming) -> uint32;
 
     // Farming (ROADMAP D1): on, she picks mobs in her band within the hunt
     // radius, and with none in reach heads for the nearest farther off and
