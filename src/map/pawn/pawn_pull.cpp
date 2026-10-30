@@ -118,6 +118,16 @@ auto CPawnController::PullerSeat() const -> bool
     return pawn::roster::roleOf(static_cast<CCharEntity*>(POwner)) == cardian::party::Role::Puller;
 }
 
+auto CPawnController::BringsIn(const CBattleEntity* PChar, const CBattleEntity* PMob) -> bool
+{
+    if (PChar == nullptr || PMob == nullptr || PChar->objtype != TYPE_PC || PChar->PAI == nullptr)
+    {
+        return false;
+    }
+    const auto* PPuller = dynamic_cast<const CPawnController*>(PChar->PAI->GetController());
+    return PPuller != nullptr && PPuller->m_Pull.has_value() && PPuller->m_Pull->step != PullRun::Step::Out && PPuller->m_Pull->mob == PMob;
+}
+
 void CPawnController::CallPull(const CMobEntity* PMob, const CCharEntity* PPlayer)
 {
     const uint8 call  = pawn::pull::callOf(pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)));

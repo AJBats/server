@@ -428,6 +428,9 @@ public:
     // the camp (StillPlacing), nullptr for none: what TankPlacingWait holds
     // for, and what the skillchain plan's join grace starts after
     static auto PartyTankPlacing(const CBattleEntity* PSelf, const CBattleEntity* PMob) -> const CBattleEntity*;
+    // Whether this cardian is bringing this mob in on her pull, her shot
+    // gone or her run home under way: the join grace starts once she is back
+    static auto BringsIn(const CBattleEntity* PChar, const CBattleEntity* PMob) -> bool;
     // A weapon skill Sneak Attack works with: one whose script goes through
     // the server's physical path (tactician_line.h scriptTakesSneakAttack),
     // read once per weapon skill. Any other spends it all the same

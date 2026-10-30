@@ -362,6 +362,12 @@ namespace pawn::chains
             {
                 it->second.since = now;
             }
+            // The puller running the mob in is joining until she is back: her
+            // run has its own limit (pull_math.h backSeconds)
+            if (CPawnController::BringsIn(PChar, PMob))
+            {
+                it->second.since = now;
+            }
             if (now - it->second.since < cardian::chains::kJoinGrace)
             {
                 return true;
