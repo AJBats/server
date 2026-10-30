@@ -108,6 +108,7 @@ void CPawnController::StandFromRest(const std::string_view why)
     {
         m_RestTicks = 0;
         m_KneelByRow = false;
+        m_KneelWithPlayer = false;
         m_PendingStandWhy.clear();
     }
     else if (m_Rest.standPending)
@@ -125,6 +126,7 @@ void CPawnController::FinishPendingStand()
         m_RestDeferredPosition = false;
         m_RestTicks            = 0;
         m_KneelByRow           = false;
+        m_KneelWithPlayer      = false;
         m_PendingStandWhy.clear();
     }
 }
@@ -223,8 +225,15 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool followEnabled = m_Gambits->Running() && RestsWithPlayer() && leader != nullptr && !calledOff;
     const bool follow = m_RestFollow.request(followEnabled, leader != nullptr && leader->animation == xi::Animation::Healing,
                                            now, std::chrono::duration<double>(ReactionBeat()).count());
+    // Beside him, or down on a kneel his rest started. A kneel of her own
+    // away from him is not his: once its reason ends she stands, comes to
+    // him, and kneels with him there
+    if (healing == nullptr)
+    {
+        m_KneelWithPlayer = false;
+    }
     const bool nearLeader = leader != nullptr && (Staked() || distance(POwner->loc.p, leader->loc.p) < 10.0f);
-    const bool withPlayer = follow && (healing != nullptr || nearLeader);
+    const bool withPlayer = follow && (nearLeader || (healing != nullptr && m_KneelWithPlayer));
     const auto advice = pawn::tactics::restAdvice(static_cast<CCharEntity*>(POwner));
     // The emergency cure stands any kneeling caster the party picks for it
     // (the bank advises everyone who offers it spells), whatever her Rest
@@ -533,6 +542,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         // Her marked Rest row's own kneel, which its conditions lapsing never
         // ends; one with the player, on an order or in town is theirs
         m_KneelByRow = !ordered && !townKneel && !withPlayer && (kneel || campKneel);
+        m_KneelWithPlayer = !ordered && !townKneel && withPlayer;
         ShowInfoFmt("rest: {} kneels ({}, hp {}%, mp {}%)", POwner->getName(),
                     ordered ? (m_RestOrder.byRow ? "her Rest row" : "the player's rest order") : townKneel ? "town" : withPlayer ? "with the player" :
                     campKneel && !supportRecovery ? "between pulls at the camp" : "the tactician's recovery",
